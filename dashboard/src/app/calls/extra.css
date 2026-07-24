@@ -1,0 +1,72 @@
+
+
+.loading-state {
+  text-align: center;
+  padding: 60px 0;
+  color: var(--text-muted);
+  font-size: 15px;
+}
+
+.agent-cell {
+  font-size: 14px;
+  color: var(--text-main);
+}
+
+.date-cell {
+  font-size: 13px;
+}
+
+.time-badge {
+  display: block;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.duration-cell {
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+
+.call-icon.inbound {
+  background-color: var(--positive-bg);
+  color: var(--positive-text);
+}
+
+.call-icon.outbound {
+  background-color: #dbeafe;
+  color: #2563eb;
+}
+
+.type-pill {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.type-inbound {
+  background-color: var(--positive-bg);
+  color: var(--positive-text);
+}
+
+.type-outbound {
+  background-color: #dbeafe;
+  color: #2563eb;
+}
+
+.transcript-badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  background-color: var(--accent-gold-light);
+  color: var(--accent-gold-dark);
+}
+
+.no-transcript-badge {
+  color: var(--text-muted);
+  font-size: 14px;
+}

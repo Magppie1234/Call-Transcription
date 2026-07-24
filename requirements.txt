@@ -1,0 +1,5 @@
+requests>=2.32
+python-dotenv>=1.0
+fastapi
+uvicorn[standard]
+sarvamai>=0.1.0
