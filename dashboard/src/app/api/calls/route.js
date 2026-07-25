@@ -1,34 +1,34 @@
 import { NextResponse } from 'next/server';
-import fs from 'fs';
-import path from 'path';
-
-// File-based token cache to survive server restarts and avoid Zoho rate limits
-const TOKEN_CACHE_FILE = path.join(process.cwd(), '..', '.zoho_token_cache.json');
+import { supabase } from '@/lib/supabase';
 
 // Only show recordings from the last month (rolling 30-day window)
 const RECENT_DAYS = 30;
 
-function readTokenCache() {
-  try {
-    if (fs.existsSync(TOKEN_CACHE_FILE)) {
-      return JSON.parse(fs.readFileSync(TOKEN_CACHE_FILE, 'utf-8'));
-    }
-  } catch {}
-  return { token: null, expiresAt: 0 };
+async function readTokenCache() {
+  const { data } = await supabase.from('app_kv').select('value').eq('key', 'zoho_token_cache').maybeSingle();
+  return data?.value || { token: null, expiresAt: 0 };
 }
 
-function writeTokenCache(token, expiresIn) {
-  const cache = {
-    token,
-    expiresAt: Date.now() + (expiresIn || 3600) * 1000,
-  };
-  try { fs.writeFileSync(TOKEN_CACHE_FILE, JSON.stringify(cache)); } catch {}
+async function writeTokenCache(token, expiresIn) {
+  const cache = { token, expiresAt: Date.now() + (expiresIn || 3600) * 1000 };
+  await supabase.from('app_kv').upsert({ key: 'zoho_token_cache', value: cache, updated_at: new Date().toISOString() });
   return cache;
+}
+
+// Every transcribed call_id, fetched once per request instead of one
+// lookup per call — avoids an N-query fan-out.
+async function listTranscriptIds() {
+  const { data, error } = await supabase.from('transcripts').select('call_id');
+  if (error) {
+    console.error('listTranscriptIds error:', error);
+    return new Set();
+  }
+  return new Set(data.map(r => r.call_id));
 }
 
 async function getZohoToken() {
   // Return cached token if still valid (with 2 min buffer)
-  const cached = readTokenCache();
+  const cached = await readTokenCache();
   if (cached.token && Date.now() < cached.expiresAt - 120000) {
     return cached.token;
   }
@@ -49,7 +49,7 @@ async function getZohoToken() {
 
     const json = await res.json();
     if (json.access_token) {
-      writeTokenCache(json.access_token, json.expires_in);
+      await writeTokenCache(json.access_token, json.expires_in);
       return json.access_token;
     }
 
@@ -67,16 +67,12 @@ async function getZohoToken() {
   throw new Error('Failed to get Zoho token after 3 retries');
 }
 
-function formatCall(c) {
+function formatCall(c, transcriptIds) {
   const customerRec = c.What_Id || c.Who_Id;
   const customerName = customerRec?.name || 'Unknown';
   const phoneMatch = c.Subject?.match(/\((\+\d+)\)/);
   const phone = phoneMatch ? phoneMatch[1] : '';
-
-  // Check if we have a transcript on disk
-  const transcriptsDir = path.join(process.cwd(), '..', 'out', 'transcripts');
-  const transcriptFile = path.join(transcriptsDir, `${c.id}.mp3.json`);
-  const hasTranscript = fs.existsSync(transcriptFile);
+  const hasTranscript = transcriptIds.has(c.id);
 
   return {
     id: c.id,
@@ -97,7 +93,7 @@ export async function GET(request) {
   const callId = searchParams.get('callId');
 
   try {
-    const token = await getZohoToken();
+    const [token, transcriptIds] = await Promise.all([getZohoToken(), listTranscriptIds()]);
     const api = process.env.ZOHO_API_DOMAIN;
     const fields = 'id,Subject,Call_Type,Call_Duration,Call_Start_Time,Owner,Who_Id,What_Id,Voice_Recording__s,Call_Status,Call_Result';
 
@@ -114,7 +110,7 @@ export async function GET(request) {
       }
       const data = await res.json();
       const record = data.data?.[0] || data;
-      return NextResponse.json(formatCall(record));
+      return NextResponse.json(formatCall(record, transcriptIds));
     }
 
     // Paginate newest-first until we cross the last-month cutoff, then stop.
@@ -157,7 +153,7 @@ export async function GET(request) {
       const t = c.Call_Start_Time ? new Date(c.Call_Start_Time).getTime() : NaN;
       return !isNaN(t) && t >= cutoff;
     });
-    return NextResponse.json(calls.map(formatCall));
+    return NextResponse.json(calls.map(c => formatCall(c, transcriptIds)));
   } catch (err) {
     console.error('Calls API error:', err);
     return NextResponse.json({ error: err.message }, { status: 500 });

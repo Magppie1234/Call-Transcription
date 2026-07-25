@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
-import fs from 'fs';
-import path from 'path';
+import { supabase } from '@/lib/supabase';
 
 export async function GET(request) {
   const { searchParams } = new URL(request.url);
@@ -10,16 +9,18 @@ export async function GET(request) {
     return NextResponse.json({ error: 'Missing callId' }, { status: 400 });
   }
 
-  // Look for a pre-existing transcript JSON in out/transcripts/
-  const transcriptsDir = path.join(process.cwd(), '..', 'out', 'transcripts');
-  const filePath = path.join(transcriptsDir, `${callId}.mp3.json`);
+  const { data, error } = await supabase
+    .from('transcripts')
+    .select('transcript')
+    .eq('call_id', callId)
+    .maybeSingle();
 
-  if (fs.existsSync(filePath)) {
-    const fileContent = fs.readFileSync(filePath, 'utf-8');
-    const data = JSON.parse(fileContent);
-    return NextResponse.json({ status: 'ready', transcript: data });
+  if (error) {
+    console.error('Transcript fetch error:', error);
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
-
-  // No transcript yet
-  return NextResponse.json({ status: 'not_found' }, { status: 404 });
+  if (!data) {
+    return NextResponse.json({ status: 'not_found' }, { status: 404 });
+  }
+  return NextResponse.json({ status: 'ready', transcript: data.transcript });
 }
