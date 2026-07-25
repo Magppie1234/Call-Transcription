@@ -1,53 +1,34 @@
 import { NextResponse } from 'next/server';
-import { get, put, list } from '@vercel/blob';
+import fs from 'fs';
+import path from 'path';
 
-// Token cache lives in Vercel Blob (private) — Vercel's serverless filesystem
-// is read-only, so a local file can't survive between requests there.
-const TOKEN_CACHE_PATH = 'zoho-token-cache.json';
+// File-based token cache to survive server restarts and avoid Zoho rate limits
+const TOKEN_CACHE_FILE = path.join(process.cwd(), '..', '.zoho_token_cache.json');
 
 // Only show recordings from the last month (rolling 30-day window)
 const RECENT_DAYS = 30;
 
-async function readTokenCache() {
+function readTokenCache() {
   try {
-    const result = await get(TOKEN_CACHE_PATH, { access: 'private' });
-    if (result?.stream) return await new Response(result.stream).json();
+    if (fs.existsSync(TOKEN_CACHE_FILE)) {
+      return JSON.parse(fs.readFileSync(TOKEN_CACHE_FILE, 'utf-8'));
+    }
   } catch {}
   return { token: null, expiresAt: 0 };
 }
 
-async function writeTokenCache(token, expiresIn) {
+function writeTokenCache(token, expiresIn) {
   const cache = {
     token,
     expiresAt: Date.now() + (expiresIn || 3600) * 1000,
   };
-  try {
-    await put(TOKEN_CACHE_PATH, JSON.stringify(cache), {
-      access: 'private', contentType: 'application/json', allowOverwrite: true,
-    });
-  } catch {}
+  try { fs.writeFileSync(TOKEN_CACHE_FILE, JSON.stringify(cache)); } catch {}
   return cache;
-}
-
-// List every transcript pathname in Blob storage once per request, instead of
-// one filesystem/network check per call — avoids an N-request fan-out.
-async function listTranscriptIds() {
-  const ids = new Set();
-  let cursor;
-  do {
-    const res = await list({ prefix: 'transcripts/', cursor, limit: 1000 });
-    for (const b of res.blobs) {
-      const m = b.pathname.match(/^transcripts\/(.+)\.mp3\.json$/);
-      if (m) ids.add(m[1]);
-    }
-    cursor = res.hasMore ? res.cursor : undefined;
-  } while (cursor);
-  return ids;
 }
 
 async function getZohoToken() {
   // Return cached token if still valid (with 2 min buffer)
-  const cached = await readTokenCache();
+  const cached = readTokenCache();
   if (cached.token && Date.now() < cached.expiresAt - 120000) {
     return cached.token;
   }
@@ -86,12 +67,16 @@ async function getZohoToken() {
   throw new Error('Failed to get Zoho token after 3 retries');
 }
 
-function formatCall(c, transcriptIds) {
+function formatCall(c) {
   const customerRec = c.What_Id || c.Who_Id;
   const customerName = customerRec?.name || 'Unknown';
   const phoneMatch = c.Subject?.match(/\((\+\d+)\)/);
   const phone = phoneMatch ? phoneMatch[1] : '';
-  const hasTranscript = transcriptIds.has(c.id);
+
+  // Check if we have a transcript on disk
+  const transcriptsDir = path.join(process.cwd(), '..', 'out', 'transcripts');
+  const transcriptFile = path.join(transcriptsDir, `${c.id}.mp3.json`);
+  const hasTranscript = fs.existsSync(transcriptFile);
 
   return {
     id: c.id,
@@ -112,7 +97,7 @@ export async function GET(request) {
   const callId = searchParams.get('callId');
 
   try {
-    const [token, transcriptIds] = await Promise.all([getZohoToken(), listTranscriptIds()]);
+    const token = await getZohoToken();
     const api = process.env.ZOHO_API_DOMAIN;
     const fields = 'id,Subject,Call_Type,Call_Duration,Call_Start_Time,Owner,Who_Id,What_Id,Voice_Recording__s,Call_Status,Call_Result';
 
@@ -129,7 +114,7 @@ export async function GET(request) {
       }
       const data = await res.json();
       const record = data.data?.[0] || data;
-      return NextResponse.json(formatCall(record, transcriptIds));
+      return NextResponse.json(formatCall(record));
     }
 
     // Paginate newest-first until we cross the last-month cutoff, then stop.
@@ -172,7 +157,7 @@ export async function GET(request) {
       const t = c.Call_Start_Time ? new Date(c.Call_Start_Time).getTime() : NaN;
       return !isNaN(t) && t >= cutoff;
     });
-    return NextResponse.json(calls.map(c => formatCall(c, transcriptIds)));
+    return NextResponse.json(calls.map(formatCall));
   } catch (err) {
     console.error('Calls API error:', err);
     return NextResponse.json({ error: err.message }, { status: 500 });
