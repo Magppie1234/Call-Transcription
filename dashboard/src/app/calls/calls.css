@@ -146,6 +146,10 @@
   margin-bottom: 4px;
 }
 
+.dot-summarized {
+  background-color: #facc15; /* yellow — distinct from the site's gold/amber accent */
+}
+
 .customer-meta {
   font-size: 12px;
   color: var(--text-muted);

@@ -26,6 +26,16 @@ async function listTranscriptIds() {
   return new Set(data.map(r => r.call_id));
 }
 
+// Same idea for calls that have gone through LLM summarization/analysis.
+async function listSummarizedIds() {
+  const { data, error } = await supabase.from('call_summaries').select('call_id');
+  if (error) {
+    console.error('listSummarizedIds error:', error);
+    return new Set();
+  }
+  return new Set(data.map(r => r.call_id));
+}
+
 async function getZohoToken() {
   // Return cached token if still valid (with 2 min buffer)
   const cached = await readTokenCache();
@@ -67,12 +77,13 @@ async function getZohoToken() {
   throw new Error('Failed to get Zoho token after 3 retries');
 }
 
-function formatCall(c, transcriptIds) {
+function formatCall(c, transcriptIds, summarizedIds) {
   const customerRec = c.What_Id || c.Who_Id;
   const customerName = customerRec?.name || 'Unknown';
   const phoneMatch = c.Subject?.match(/\((\+\d+)\)/);
   const phone = phoneMatch ? phoneMatch[1] : '';
   const hasTranscript = transcriptIds.has(c.id);
+  const hasSummary = summarizedIds.has(c.id);
 
   return {
     id: c.id,
@@ -85,6 +96,7 @@ function formatCall(c, transcriptIds) {
     disposition: c.Call_Result || c.Call_Status || '',
     recordingUrl: c.Voice_Recording__s,
     hasTranscript,
+    hasSummary,
   };
 }
 
@@ -93,7 +105,9 @@ export async function GET(request) {
   const callId = searchParams.get('callId');
 
   try {
-    const [token, transcriptIds] = await Promise.all([getZohoToken(), listTranscriptIds()]);
+    const [token, transcriptIds, summarizedIds] = await Promise.all([
+      getZohoToken(), listTranscriptIds(), listSummarizedIds(),
+    ]);
     const api = process.env.ZOHO_API_DOMAIN;
     const fields = 'id,Subject,Call_Type,Call_Duration,Call_Start_Time,Owner,Who_Id,What_Id,Voice_Recording__s,Call_Status,Call_Result';
 
@@ -110,7 +124,7 @@ export async function GET(request) {
       }
       const data = await res.json();
       const record = data.data?.[0] || data;
-      return NextResponse.json(formatCall(record, transcriptIds));
+      return NextResponse.json(formatCall(record, transcriptIds, summarizedIds));
     }
 
     // Paginate newest-first until we cross the last-month cutoff, then stop.
@@ -155,7 +169,7 @@ export async function GET(request) {
       const t = c.Call_Start_Time ? new Date(c.Call_Start_Time).getTime() : NaN;
       return !isNaN(t) && t >= cutoff;
     });
-    return NextResponse.json(calls.map(c => formatCall(c, transcriptIds)));
+    return NextResponse.json(calls.map(c => formatCall(c, transcriptIds, summarizedIds)));
   } catch (err) {
     console.error('Calls API error:', err);
     return NextResponse.json({ error: err.message }, { status: 500 });

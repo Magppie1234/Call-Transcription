@@ -104,7 +104,10 @@ export default function CallsPage() {
                           {call.callType === 'Inbound' ? '📲' : '📞'}
                         </div>
                         <div>
-                          <div className="customer-name">{call.customer.name}</div>
+                          <div className="customer-name">
+                            {call.hasSummary && <span className="dot dot-summarized" title="Summarized" />}
+                            {call.customer.name}
+                          </div>
                           <div className="customer-meta">{call.customer.phone}</div>
                         </div>
                       </div>
