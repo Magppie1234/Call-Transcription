@@ -8,7 +8,7 @@ Usage:
     python scripts/batch_transcribe.py --ids id1,id2    # specific calls only
     python scripts/batch_transcribe.py --batch-size 30  # files per Sarvam job (default 30)
 """
-import os, sys, time, json, argparse, requests
+import os, sys, time, json, argparse, subprocess, requests
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -327,6 +327,17 @@ def main():
             print(f"  💾 Saved {saved} transcripts (running total: {total_saved})\n")
         else:
             print("  ⚠ No results for this batch\n")
+
+    # Sarvam mishears "Magppie" dozens of ways (Macpay, Matpai, Max Five, ...).
+    # Normalise automatically so no transcript is ever left with a wrong company
+    # name; it's free, deterministic, and safe to re-run.
+    if total_saved:
+        print("\n🔤 Normalising company-name mishears...")
+        try:
+            subprocess.run([sys.executable, str(BASE / "scripts" / "clean_names.py"),
+                            "--local-only"], check=True)
+        except Exception as e:
+            print(f"  ⚠ name cleanup failed ({e}) — run scripts/clean_names.py manually")
 
     print(f"\n{'='*50}")
     print(f"✅ Done! {total_saved} new transcripts saved.")
