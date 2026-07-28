@@ -43,7 +43,7 @@ ZOHO_ACC    = os.getenv("ZOHO_ACCOUNTS_DOMAIN", "https://accounts.zoho.in")
 TOKEN_CACHE = BASE / ".zoho_token_cache.json"
 
 OPENROUTER_KEY = os.getenv("OPENROUTER_API_KEY")
-MODEL          = os.getenv("SUMMARY_MODEL", "openai/gpt-oss-20b:free")
+MODEL          = os.getenv("SUMMARY_MODEL", "nvidia/nemotron-3-ultra-550b-a55b:free")
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
