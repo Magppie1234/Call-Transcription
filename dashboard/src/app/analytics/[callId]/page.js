@@ -112,23 +112,36 @@ export default function CallAnalysisPage({ params }) {
       {!data.hadConversation && (
         <div className="info-bar">
           <strong>Not scored.</strong> This call reached a voicemail, IVR, or went unanswered
-          ({data.numTurns ?? 0} speaker turns), so no real conversation took place. The agent&apos;s
-          politeness and professionalism ratings below are excluded from their averages.
+          ({data.numTurns ?? 0} speaker turns), so no real conversation took place. The agent
+          barely spoke, so politeness and professionalism aren&apos;t rated here and this call
+          doesn&apos;t count towards their averages.
         </div>
       )}
+
+      {/* Summary first — the ratings belong underneath it, not above */}
+      <section className="panel">
+        <h3 className="panel-title">Call Summary</h3>
+        <p className="summary-text">{data.summary}</p>
+        {data.nextAction && (
+          <div className="next-action">
+            <span className="next-action-label">Next action</span>
+            <span>{data.nextAction}</span>
+          </div>
+        )}
+      </section>
 
       {/* Scores */}
       <div className="stat-row">
         <div className="stat-box">
           <span className="stat-label">Professionalism</span>
           <span className={`score-badge score-badge-${scoreBand(data.agentProfessionalism)} score-lg`}>
-            {data.agentProfessionalism ?? '—'}/5
+            {data.hadConversation ? `${data.agentProfessionalism ?? '—'}/5` : '—'}
           </span>
         </div>
         <div className="stat-box">
           <span className="stat-label">Politeness</span>
           <span className={`score-badge score-badge-${scoreBand(data.agentPoliteness)} score-lg`}>
-            {data.agentPoliteness ?? '—'}/5
+            {data.hadConversation ? `${data.agentPoliteness ?? '—'}/5` : '—'}
           </span>
         </div>
         <div className="stat-box">
@@ -148,18 +161,6 @@ export default function CallAnalysisPage({ params }) {
           </span>
         </div>
       </div>
-
-      {/* Summary */}
-      <section className="panel">
-        <h3 className="panel-title">Call Summary</h3>
-        <p className="summary-text">{data.summary}</p>
-        {data.nextAction && (
-          <div className="next-action">
-            <span className="next-action-label">Next action</span>
-            <span>{data.nextAction}</span>
-          </div>
-        )}
-      </section>
 
       <div className="panel-grid">
         <ListCard title="Objections Raised" items={data.objections} empty="No objections raised." />

@@ -60,7 +60,11 @@ class Requirements(BaseModel):
     timeline:     Optional[str] = Field(None, description="when they want it done; null if not mentioned")
 
 class CallSummary(BaseModel):
-    summary: str = Field(description="2-3 sentence neutral overview of the conversation")
+    summary: str = Field(
+        description="What happened on this call, in 1-2 short sentences (35 words max). "
+                    "State the outcome and the single most important detail. Do not "
+                    "restate the agent/customer names, do not rate the agent's conduct, "
+                    "and do not repeat information captured in the other fields.")
     call_outcome: Literal[
         "interested", "not_interested", "callback_requested", "follow_up_needed",
         "not_reachable", "wrong_number", "already_purchased", "unclear",
@@ -89,7 +93,13 @@ SYSTEM = (
     "3. The transcript is machine-generated (Hindi/English/Telugu, romanised) and may contain "
     "errors — interpret charitably but do not invent facts that aren't there.\n"
     "4. If the call has no real conversation (voicemail, immediate hang-up, no answer), reflect "
-    "that honestly in the outcome and summary.\n\n"
+    "that honestly in the outcome and summary.\n"
+    "5. Keep `summary` to 1-2 short sentences, 35 words maximum. Lead with what happened. "
+    "Do not open with the agent's or customer's name (they are already shown alongside), do "
+    "not judge or rate the agent's politeness/professionalism there (those are separate "
+    "numeric fields), and do not repeat objections, action items or next steps that belong "
+    "in their own fields. Be specific over general: prefer 'wants a quote for a 10x8 kitchen' "
+    "to 'discussed requirements'.\n\n"
     "Respond with ONLY a single JSON object matching this schema — no prose, no markdown fences, "
     "no explanation before or after:\n\n"
     f"{json.dumps(CallSummary.model_json_schema(), indent=2)}"
@@ -292,6 +302,8 @@ def main():
     ap.add_argument("--limit", type=int, default=0, help="cap this run (0 = no cap, but daily-limit still applies)")
     ap.add_argument("--daily-limit", type=int, default=DAILY_LIMIT,
                      help=f"max requests this run, to stay under the free tier's 50/day cap (default {DAILY_LIMIT})")
+    ap.add_argument("--force", action="store_true",
+                     help="re-summarize calls that already have a summary (e.g. after a prompt change)")
     args = ap.parse_args()
 
     if not OPENROUTER_KEY:
@@ -304,12 +316,18 @@ def main():
     client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=OPENROUTER_KEY)
 
     done = fetch_summarized_ids()
-    print(f"☁️  {len(done)} calls already summarized in Supabase")
+    print(f"☁️  {len(done)} calls already summarized in Supabase"
+          f"{' (--force: they will be redone)' if args.force else ''}")
 
     ids = list(filter(None, args.ids.split(",")))
     if not ids:
-        ids = [f.name.removesuffix(".mp3.json") for f in sorted(TDIR.glob("*.json"))
-               if f.name.removesuffix(".mp3.json") not in done]
+        if args.force:
+            # Redo the already-summarized ones first (e.g. after a prompt change).
+            ids = [f.name.removesuffix(".mp3.json") for f in sorted(TDIR.glob("*.json"))
+                   if f.name.removesuffix(".mp3.json") in done]
+        else:
+            ids = [f.name.removesuffix(".mp3.json") for f in sorted(TDIR.glob("*.json"))
+                   if f.name.removesuffix(".mp3.json") not in done]
     if args.limit:
         ids = ids[:args.limit]
     if len(ids) > args.daily_limit:
