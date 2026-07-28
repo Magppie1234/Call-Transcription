@@ -147,9 +147,11 @@ export async function GET(request) {
       if (!d.info?.more_records || !pageToken) break;
     }
 
-    // Keep only calls that have a recording AND happened in the last month
+    // Keep only calls that have a recording, happened in the last month, AND
+    // actually have a transcript — this list only shows calls with a transcription.
     const calls = allRecords.filter(c => {
       if (!c.Voice_Recording__s) return false;
+      if (!transcriptIds.has(c.id)) return false;
       const t = c.Call_Start_Time ? new Date(c.Call_Start_Time).getTime() : NaN;
       return !isNaN(t) && t >= cutoff;
     });
