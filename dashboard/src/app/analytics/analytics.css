@@ -1,0 +1,151 @@
+.analytics-main {
+  padding: 32px 40px;
+}
+
+.analytics-header-section {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24px;
+}
+
+.subtitle {
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.loading-state {
+  background-color: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 40px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.muted-text {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.analytics-content {
+  margin-top: 8px;
+}
+
+.analytics-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 24px;
+  margin-top: 24px;
+}
+
+.span-2 {
+  grid-column: span 2;
+}
+
+.section-title {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 16px;
+}
+
+.empty-note {
+  color: var(--text-muted);
+  font-size: 14px;
+  padding: 12px 0;
+}
+
+.metric-val-text {
+  font-size: 20px;
+}
+
+/* Ranked bar lists (top objections, outcomes) */
+.bar-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.bar-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 2fr auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.bar-label {
+  font-size: 13px;
+  color: var(--text-main);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bar-track {
+  height: 20px;
+  background-color: var(--neutral-bg);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.bar-fill {
+  height: 100%;
+  background-color: var(--accent-gold-dark);
+  border-radius: 6px;
+}
+
+.bar-count {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-main);
+  min-width: 24px;
+  text-align: right;
+}
+
+/* Sentiment summary */
+.sentiment-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.sentiment-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.sentiment-count {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+/* Talk-ratio meter */
+.meter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 100px;
+}
+
+.meter-track {
+  flex: 1;
+  height: 8px;
+  background-color: var(--neutral-bg);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.meter-fill {
+  height: 100%;
+  border-radius: 999px;
+}
+
+.meter-good { background-color: var(--positive-text); }
+.meter-warn { background-color: var(--negative-text); }
+
+.meter-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  min-width: 32px;
+}
