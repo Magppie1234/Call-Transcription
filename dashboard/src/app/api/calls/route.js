@@ -15,26 +15,28 @@ async function writeTokenCache(token, expiresIn) {
   return cache;
 }
 
-// Every transcribed call_id, fetched once per request instead of one
-// lookup per call — avoids an N-query fan-out.
-async function listTranscriptIds() {
-  const { data, error } = await supabase.from('transcripts').select('call_id');
-  if (error) {
-    console.error('listTranscriptIds error:', error);
-    return new Set();
+// All call_ids from a table, fetched once per request instead of one lookup
+// per call. Paginated: PostgREST returns at most 1000 rows per request, so a
+// single select would silently truncate once the corpus passes 1000.
+//
+// Errors deliberately propagate rather than resolving to an empty Set: the
+// caller filters the call list down to ids present here, so swallowing a
+// failure would hide it as a plausible-looking "no calls found" instead of
+// surfacing the real cause (e.g. Supabase env vars missing in deployment).
+async function listIds(table) {
+  const ids = new Set();
+  const PAGE = 1000;
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase
+      .from(table).select('call_id').range(from, from + PAGE - 1);
+    if (error) throw new Error(`${table}: ${error.message}`);
+    for (const r of data) ids.add(r.call_id);
+    if (data.length < PAGE) return ids;
   }
-  return new Set(data.map(r => r.call_id));
 }
 
-// Same idea for calls that have gone through LLM summarization/analysis.
-async function listSummarizedIds() {
-  const { data, error } = await supabase.from('call_summaries').select('call_id');
-  if (error) {
-    console.error('listSummarizedIds error:', error);
-    return new Set();
-  }
-  return new Set(data.map(r => r.call_id));
-}
+const listTranscriptIds = () => listIds('transcripts');
+const listSummarizedIds = () => listIds('call_summaries');
 
 async function getZohoToken() {
   // Return cached token if still valid (with 2 min buffer)

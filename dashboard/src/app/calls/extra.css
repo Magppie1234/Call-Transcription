@@ -70,3 +70,17 @@
   color: var(--text-muted);
   font-size: 14px;
 }
+
+.error-detail {
+  margin-top: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  color: var(--negative-text);
+  word-break: break-word;
+}
+
+.error-hint {
+  margin-top: 10px;
+  font-size: 13px;
+  color: var(--text-muted);
+}

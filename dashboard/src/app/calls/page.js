@@ -15,18 +15,30 @@ function formatDate(iso) {
 export default function CallsPage() {
   const [calls, setCalls] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [filter, setFilter] = useState('All');
   const [search, setSearch] = useState('');
 
-  useEffect(() => {
+  // Show why the list is empty. A failed request rendered as "No calls found"
+  // is indistinguishable from genuinely having no calls, which hides real
+  // problems like missing environment variables in a deployment.
+  const load = () => {
+    setLoading(true);
+    setError(null);
     fetch('/api/calls')
-      .then(r => r.json())
+      .then(async r => {
+        const data = await r.json();
+        if (!r.ok) throw new Error(data?.error || `Request failed (${r.status})`);
+        return data;
+      })
       .then(data => {
         setCalls(Array.isArray(data) ? data : []);
         setLoading(false);
       })
-      .catch(() => setLoading(false));
-  }, []);
+      .catch(e => { setError(e.message); setLoading(false); });
+  };
+
+  useEffect(() => { load(); }, []);
 
   const filtered = calls.filter(c => {
     const matchFilter =
@@ -51,7 +63,7 @@ export default function CallsPage() {
           <h1 className="title-header">Call Recordings</h1>
           <p className="subtitle">Live from Zoho CRM · {calls.length} recordings found</p>
         </div>
-        <button className="btn-dark" onClick={() => { setLoading(true); fetch('/api/calls').then(r => r.json()).then(d => { setCalls(Array.isArray(d) ? d : []); setLoading(false); }); }}>
+        <button className="btn-dark" onClick={load}>
           ↻ Refresh
         </button>
       </div>
@@ -76,7 +88,16 @@ export default function CallsPage() {
       </div>
 
       <div className="table-container">
-        {loading ? (
+        {error ? (
+          <div className="loading-state">
+            <strong>Couldn&apos;t load calls.</strong>
+            <div className="error-detail">{error}</div>
+            <div className="error-hint">
+              If this is a deployment, check that the Zoho and Supabase environment
+              variables are set for this environment.
+            </div>
+          </div>
+        ) : loading ? (
           <div className="loading-state">Loading calls from Zoho CRM…</div>
         ) : filtered.length === 0 ? (
           <div className="loading-state">No calls found.</div>
