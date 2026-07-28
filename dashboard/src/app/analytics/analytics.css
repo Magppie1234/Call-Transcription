@@ -238,3 +238,14 @@
 /* Sentiment cells read better capitalized */
 .data-table td .dot + * { text-transform: capitalize; }
 .data-table tbody td:nth-child(5) { text-transform: capitalize; }
+
+.scoring-note {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: -12px 0 20px;
+  line-height: 1.5;
+}
+
+.not-scored {
+  color: var(--text-muted);
+}

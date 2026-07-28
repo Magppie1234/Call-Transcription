@@ -93,9 +93,11 @@ export default function CallAnalysisPage({ params }) {
           </p>
         </div>
         <div className="header-actions">
-          {data.status === 'needs_attention'
-            ? <span className="badge badge-negative">Needs attention</span>
-            : <span className="badge badge-positive">Good</span>}
+          {data.status === 'no_conversation'
+            ? <span className="badge badge-neutral">No conversation</span>
+            : data.status === 'needs_attention'
+              ? <span className="badge badge-negative">Needs attention</span>
+              : <span className="badge badge-positive">Good</span>}
           <Link href={`/calls/${data.callId}`} className="view-btn">
             Transcript &amp; recording <span className="view-arrow">→</span>
           </Link>
@@ -106,6 +108,14 @@ export default function CallAnalysisPage({ params }) {
       {data.reasons.length > 0 && (
         <div className="alert-bar">
           <strong>Flagged:</strong> {data.reasons.join(' · ')}
+        </div>
+      )}
+
+      {!data.hadConversation && (
+        <div className="info-bar">
+          <strong>Not scored.</strong> This call reached a voicemail, IVR, or went unanswered
+          ({data.numTurns ?? 0} speaker turns), so no real conversation took place. The agent&apos;s
+          politeness and professionalism ratings below are excluded from their averages.
         </div>
       )}
 

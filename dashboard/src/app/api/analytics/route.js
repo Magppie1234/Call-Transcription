@@ -2,9 +2,20 @@ import { NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
 
 const LIST_COLS =
-  'call_id, agent, customer, start_time, duration_seconds, agent_talk_pct, ' +
+  'call_id, agent, customer, start_time, duration_seconds, agent_talk_pct, num_turns, ' +
   'call_outcome, customer_sentiment, interest_level, agent_politeness, ' +
   'agent_professionalism, red_flags, objections, summary';
+
+// Voicemail / IVR / answering-machine pickups get politeness+professionalism
+// scores from the model even though the agent barely spoke and no two-way
+// exchange happened — which unfairly drags down the agent's averages.
+// num_turns comes from diarization (ground truth, not the LLM). In the data so
+// far every no-conversation call has <=5 turns and every real dialogue has >=10,
+// so 8 sits safely in the gap. Topic doesn't matter: a wrong number where the
+// two people actually talked still counts as a conversation.
+const MIN_TURNS_FOR_CONVERSATION = 8;
+
+const hadConversation = r => (r.num_turns ?? 0) >= MIN_TURNS_FOR_CONVERSATION;
 
 // Paginated fetch — PostgREST caps at 1000 rows/request by default.
 async function fetchAllSummaries(cutoffIso) {
@@ -43,13 +54,16 @@ function attentionReasons(r) {
 }
 
 function toListItem(r) {
-  const reasons = attentionReasons(r);
+  const scored = hadConversation(r);
+  // A voicemail can't be "rude" — don't flag the agent over a call that never happened.
+  const reasons = scored ? attentionReasons(r) : [];
   return {
     callId: r.call_id,
     customer: r.customer,
     agent: r.agent,
     startTime: r.start_time,
     durationSeconds: r.duration_seconds,
+    numTurns: r.num_turns,
     callOutcome: r.call_outcome,
     customerSentiment: r.customer_sentiment,
     interestLevel: r.interest_level,
@@ -59,7 +73,8 @@ function toListItem(r) {
     objectionCount: (r.objections || []).length,
     redFlags: r.red_flags || [],
     summary: r.summary,
-    status: reasons.length ? 'needs_attention' : 'good',
+    hadConversation: scored,
+    status: !scored ? 'no_conversation' : (reasons.length ? 'needs_attention' : 'good'),
     reasons,
   };
 }
@@ -98,8 +113,10 @@ async function getOne(callId) {
     language: data.language,
     model: data.model,
     summarizedAt: data.summarized_at,
-    status: attentionReasons(data).length ? 'needs_attention' : 'good',
-    reasons: attentionReasons(data),
+    hadConversation: hadConversation(data),
+    status: !hadConversation(data) ? 'no_conversation'
+      : (attentionReasons(data).length ? 'needs_attention' : 'good'),
+    reasons: hadConversation(data) ? attentionReasons(data) : [],
   };
 }
 
@@ -120,20 +137,29 @@ export async function GET(request) {
 
     const rows = await fetchAllSummaries(cutoffIso);
     const calls = rows.map(toListItem);
-    const needsAttention = calls.filter(c => c.status === 'needs_attention');
+
+    // Agent-behaviour averages are computed over real conversations only —
+    // scoring voicemails would penalise agents for calls nobody answered.
+    const scoredRows = rows.filter(hadConversation);
+    const needsAttentionCount = calls.filter(c => c.status === 'needs_attention').length;
+    const noConversationCount = calls.filter(c => c.status === 'no_conversation').length;
 
     return NextResponse.json({
       meta: {
         range,
         total: calls.length,
-        needsAttentionCount: needsAttention.length,
-        goodCount: calls.length - needsAttention.length,
+        needsAttentionCount,
+        goodCount: calls.length - needsAttentionCount - noConversationCount,
+        noConversationCount,
+        scoredCount: scoredRows.length,
       },
-      topline: calls.length ? {
-        avgProfessionalism: avg(rows, 'agent_professionalism'),
-        avgPoliteness: avg(rows, 'agent_politeness'),
-        avgTalkPct: avg(rows, 'agent_talk_pct'),
-        pctInterested: round1((100 * calls.filter(c => c.callOutcome === 'interested').length) / calls.length),
+      topline: scoredRows.length ? {
+        avgProfessionalism: avg(scoredRows, 'agent_professionalism'),
+        avgPoliteness: avg(scoredRows, 'agent_politeness'),
+        avgTalkPct: avg(scoredRows, 'agent_talk_pct'),
+        pctInterested: round1(
+          (100 * scoredRows.filter(r => r.call_outcome === 'interested').length) / scoredRows.length
+        ),
       } : null,
       calls,
     });
