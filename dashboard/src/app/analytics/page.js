@@ -87,8 +87,8 @@ export default function AnalyticsPage() {
 
           <p className="scoring-note">
             Scores averaged over the {data.meta.scoredCount} calls with a real conversation.
-            {data.meta.noConversationCount > 0 && (
-              <> {data.meta.noConversationCount} voicemail/unanswered calls are listed but not scored —
+            {data.meta.unscoredCount > 0 && (
+              <> {data.meta.unscoredCount} voicemail/unanswered calls are listed but not scored —
               the agent barely spoke, so rating them would unfairly drag their averages down.</>
             )}
           </p>
@@ -110,14 +110,6 @@ export default function AnalyticsPage() {
               >
                 Good <span className="tab-count">{data.meta.goodCount}</span>
               </button>
-              {data.meta.noConversationCount > 0 && (
-                <button
-                  className={`filter-tab ${filter === 'no_conversation' ? 'active' : ''}`}
-                  onClick={() => setFilter('no_conversation')}
-                >
-                  No Conversation <span className="tab-count">{data.meta.noConversationCount}</span>
-                </button>
-              )}
             </div>
             <input
               type="text"
@@ -177,11 +169,9 @@ export default function AnalyticsPage() {
                           : <span className="not-scored" title="Not scored — no conversation">—</span>}
                       </td>
                       <td>
-                        {c.status === 'no_conversation'
-                          ? <span className="badge badge-neutral">No conversation</span>
-                          : c.status === 'needs_attention'
-                            ? <span className="badge badge-negative">{c.reasons[0]}</span>
-                            : <span className="badge badge-positive">Good</span>}
+                        {c.status === 'needs_attention'
+                          ? <span className="badge badge-negative">{c.reasons[0]}</span>
+                          : <span className="badge badge-positive">Good</span>}
                       </td>
                     </tr>
                   );

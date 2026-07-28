@@ -93,11 +93,9 @@ export default function CallAnalysisPage({ params }) {
           </p>
         </div>
         <div className="header-actions">
-          {data.status === 'no_conversation'
-            ? <span className="badge badge-neutral">No conversation</span>
-            : data.status === 'needs_attention'
-              ? <span className="badge badge-negative">Needs attention</span>
-              : <span className="badge badge-positive">Good</span>}
+          {data.status === 'needs_attention'
+            ? <span className="badge badge-negative">Needs attention</span>
+            : <span className="badge badge-positive">Good</span>}
           <Link href={`/calls/${data.callId}`} className="view-btn">
             Transcript &amp; recording <span className="view-arrow">→</span>
           </Link>

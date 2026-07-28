@@ -43,19 +43,26 @@ function avg(rows, key) {
   return round1(vals.reduce((a, b) => a + b, 0) / vals.length);
 }
 
-// A call needs attention if anything went wrong: an explicit red flag,
-// a poor professionalism score, or a negative customer reaction.
+// Needs attention = the AGENT underperformed. Deliberately not driven by
+// red_flags: that field mixes agent faults ("agent did not clarify company
+// identity") with customer concerns ("customer mentions cheating risks") and
+// situational facts ("wrong number reached"). Using it as the trigger marked
+// a 96-turn call where the agent scored 5/5 as needing attention purely
+// because the customer voiced concerns. Red flags are still shown on the
+// call's detail page as context.
 function attentionReasons(r) {
   const reasons = [];
-  if ((r.red_flags || []).length > 0) reasons.push('Red flag');
   if (r.agent_professionalism != null && r.agent_professionalism <= 2) reasons.push('Low professionalism');
+  if (r.agent_politeness != null && r.agent_politeness <= 2) reasons.push('Low politeness');
   if (r.customer_sentiment === 'negative') reasons.push('Negative sentiment');
   return reasons;
 }
 
 function toListItem(r) {
   const scored = hadConversation(r);
-  // A voicemail can't be "rude" — don't flag the agent over a call that never happened.
+  // A voicemail can't be "rude" — don't flag the agent over a call that never
+  // happened. Unscored calls fall under "good" (nothing went wrong) but show
+  // no score, so they can never count against an agent.
   const reasons = scored ? attentionReasons(r) : [];
   return {
     callId: r.call_id,
@@ -74,7 +81,7 @@ function toListItem(r) {
     redFlags: r.red_flags || [],
     summary: r.summary,
     hadConversation: scored,
-    status: !scored ? 'no_conversation' : (reasons.length ? 'needs_attention' : 'good'),
+    status: reasons.length ? 'needs_attention' : 'good',
     reasons,
   };
 }
@@ -114,8 +121,7 @@ async function getOne(callId) {
     model: data.model,
     summarizedAt: data.summarized_at,
     hadConversation: hadConversation(data),
-    status: !hadConversation(data) ? 'no_conversation'
-      : (attentionReasons(data).length ? 'needs_attention' : 'good'),
+    status: hadConversation(data) && attentionReasons(data).length ? 'needs_attention' : 'good',
     reasons: hadConversation(data) ? attentionReasons(data) : [],
   };
 }
@@ -142,15 +148,14 @@ export async function GET(request) {
     // scoring voicemails would penalise agents for calls nobody answered.
     const scoredRows = rows.filter(hadConversation);
     const needsAttentionCount = calls.filter(c => c.status === 'needs_attention').length;
-    const noConversationCount = calls.filter(c => c.status === 'no_conversation').length;
 
     return NextResponse.json({
       meta: {
         range,
         total: calls.length,
         needsAttentionCount,
-        goodCount: calls.length - needsAttentionCount - noConversationCount,
-        noConversationCount,
+        goodCount: calls.length - needsAttentionCount,
+        unscoredCount: calls.length - scoredRows.length,
         scoredCount: scoredRows.length,
       },
       topline: scoredRows.length ? {
