@@ -67,3 +67,27 @@ create index if not exists idx_call_summaries_start_time on call_summaries (star
 create index if not exists idx_call_summaries_agent on call_summaries (agent);
 
 alter table call_summaries enable row level security;
+
+-- ── Richer per-call extraction ────────────────────────────────────────────
+-- Flat columns for anything the list view filters or aggregates on; a single
+-- jsonb column for the nested structures that are only ever displayed on one
+-- call's page (evidence + confidence, scorecard, commitments, coaching).
+-- Safe to re-run: every statement is idempotent.
+-- NB: `call_type` above already holds Zoho's Inbound/Outbound direction, so
+-- the model's own classification is stored separately as `call_category`.
+alter table call_summaries
+  add column if not exists call_category         text,
+  add column if not exists property_context      text,
+  add column if not exists property_details      text,
+  add column if not exists conversion_likelihood text,
+  add column if not exists next_step_secured     boolean,
+  add column if not exists agent_commitment_due  boolean,
+  add column if not exists competitor_mentioned  text,
+  add column if not exists stakeholders          text[] not null default '{}',
+  add column if not exists buying_signals        text[] not null default '{}',
+  add column if not exists risk_flags            text[] not null default '{}',
+  -- { budget, timeline, objections[], commitments[], scorecard{}, coaching{} }
+  add column if not exists analysis              jsonb;
+
+create index if not exists idx_call_summaries_call_category on call_summaries (call_category);
+create index if not exists idx_call_summaries_conversion on call_summaries (conversion_likelihood);

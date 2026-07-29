@@ -59,6 +59,38 @@ class Requirements(BaseModel):
     location:     Optional[str] = Field(None, description="city/area mentioned; null if not mentioned")
     timeline:     Optional[str] = Field(None, description="when they want it done; null if not mentioned")
 
+class Extracted(BaseModel):
+    """An inferred fact plus the evidence for it, so a manager can verify."""
+    value:      Optional[str] = Field(None, description="the extracted value; null if never stated")
+    evidence:   Optional[str] = Field(None, description="VERBATIM quote from the transcript; null if value is null")
+    confidence: Literal["high", "medium", "low"] = Field(
+        description="high = explicitly stated; medium = strongly implied; low = weak inference")
+
+class Objection(BaseModel):
+    objection: str = Field(description="the concern the CUSTOMER raised")
+    evidence:  Optional[str] = Field(None, description="verbatim quote of the customer raising it")
+    addressed: bool = Field(description="true only if the agent actually responded to it")
+
+class Commitment(BaseModel):
+    who:  Literal["agent", "customer"] = Field(description="who promised it")
+    what: str = Field(description="what was promised")
+    due:  Optional[str] = Field(None, description="deadline ONLY if one was stated, e.g. 'Friday'; else null")
+
+class Dimension(BaseModel):
+    applicable: bool = Field(
+        description="false when the call gave no opportunity to demonstrate this. "
+                    "Do NOT score low just because it did not occur.")
+    score:      Optional[int] = Field(None, description="1 (poor) to 5 (excellent); null when not applicable")
+    evidence:   Optional[str] = Field(None, description="verbatim quote supporting the score")
+    missed:     Optional[str] = Field(None, description="what would have been better; null if nothing")
+
+class Scorecard(BaseModel):
+    opening_identification: Dimension = Field(description="named themselves, the company, and why they were calling")
+    need_capture:           Dimension = Field(description="established new-build vs renovation, location, property details, requirements")
+    objection_handling:     Dimension = Field(description="NOT applicable unless the customer raised an objection")
+    next_step_secured:      Dimension = Field(description="agreed a concrete next action (visit, quote, catalogue, callback)")
+    language_rapport:       Dimension = Field(description="matched the customer's language, let them speak, stayed courteous")
+
 class CallSummary(BaseModel):
     summary: str = Field(
         description="What happened on this call, in 1-2 short sentences (35 words max). "
@@ -81,6 +113,53 @@ class CallSummary(BaseModel):
     red_flags: List[str] = Field(default_factory=list, description="rudeness, complaints, escalation; empty if none")
     language: str = Field(description="language(s) used, e.g. 'Hindi/English', 'Telugu'")
 
+    # ── Classification ───────────────────────────────────────────────────
+    call_type: Literal[
+        "inquiry_follow_up", "quotation_discussion", "visit_scheduling",
+        "callback_requested", "not_interested", "voicemail_no_contact",
+        "wrong_number", "other",
+    ] = Field(description="what kind of call this was")
+
+    # ── Lead intelligence (null unless actually discussed) ───────────────
+    property_context: Literal["new_build", "renovation", "not_discussed"] = Field(
+        description="is the kitchen for a new property or replacing an existing one")
+    property_details: Optional[str] = Field(
+        None, description="size/type if stated, e.g. '3BHK flat, ~168 sqft kitchen'; null otherwise")
+    budget_detail: Extracted = Field(description="any price/budget figure discussed, with the quote proving it")
+    timeline_detail: Extracted = Field(description="when they want it done, with the quote proving it")
+    stakeholders: List[str] = Field(
+        default_factory=list,
+        description="others involved in deciding, e.g. 'wife', 'architect', 'builder'; empty if none named")
+    competitor_mentioned: Optional[str] = Field(
+        None, description="any other brand/vendor/carpenter the customer is considering; null if none")
+
+    # ── Signals ──────────────────────────────────────────────────────────
+    objections_detail: List[Objection] = Field(
+        default_factory=list, description="each objection with evidence and whether the agent addressed it")
+    buying_signals: List[str] = Field(
+        default_factory=list,
+        description="concrete interest signals, e.g. 'agreed to share floor plan', 'asked for quotation'")
+    risk_flags: List[str] = Field(
+        default_factory=list, description="reasons this could be lost; empty if none")
+    conversion_likelihood: Literal["hot", "warm", "cold", "dead", "unknown"] = Field(
+        description="likelihood this becomes a sale, based only on what was said")
+
+    # ── Commitments ──────────────────────────────────────────────────────
+    commitments: List[Commitment] = Field(
+        default_factory=list, description="promises made by either side during the call")
+    next_step_secured: bool = Field(
+        description="true only if a concrete next action was agreed (not vague interest)")
+
+    # ── Quality ──────────────────────────────────────────────────────────
+    scorecard: Scorecard
+
+    # ── Coaching ─────────────────────────────────────────────────────────
+    did_well: List[str] = Field(default_factory=list, description="up to 3 specific things the agent did well")
+    improvements: List[str] = Field(
+        default_factory=list, description="up to 2 highest-impact things to improve next time")
+    suggested_followup: Optional[str] = Field(
+        None, description="a short follow-up message the agent could send; null if not applicable")
+
 SYSTEM = (
     "You analyse call-centre transcripts for Magppie, a modular-kitchen company that "
     "makes outbound sales calls. You will be given the diarized transcript of ONE call, "
@@ -99,7 +178,21 @@ SYSTEM = (
     "not judge or rate the agent's politeness/professionalism there (those are separate "
     "numeric fields), and do not repeat objections, action items or next steps that belong "
     "in their own fields. Be specific over general: prefer 'wants a quote for a 10x8 kitchen' "
-    "to 'discussed requirements'.\n\n"
+    "to 'discussed requirements'.\n"
+    "6. NEVER infer a budget, timeline, stakeholder or requirement that was not actually said. "
+    "A null with confidence 'low' is correct and useful; a plausible guess is harmful, because "
+    "these fields are read as real pipeline facts. Most calls are short and will legitimately "
+    "have many nulls — that is the expected result, not a failure.\n"
+    "7. Every `evidence` field must be a VERBATIM span copied from the transcript, never a "
+    "paraphrase. If you cannot quote it, the value should be null.\n"
+    "8. In `scorecard`, set applicable=false when the call gave no opportunity to demonstrate "
+    "that behaviour, and leave score null. Do NOT score a dimension low because it did not "
+    "happen. A voicemail, wrong number or 20-second call must come back with applicable=false "
+    "across the board — the agent cannot be judged on a conversation that never took place. "
+    "`objection_handling` is applicable ONLY if the customer actually raised an objection.\n"
+    "9. `commitments` records promises that were genuinely made ('I'll send the catalogue "
+    "today'). Only set `due` when a time was actually stated. `next_step_secured` is true only "
+    "for a concrete agreed action, not for polite interest.\n\n"
     "Respond with ONLY a single JSON object matching this schema — no prose, no markdown fences, "
     "no explanation before or after:\n\n"
     f"{json.dumps(CallSummary.model_json_schema(), indent=2)}"
@@ -225,7 +318,9 @@ def summarize(client, meta, transcript_text, retries=2):
             # Reasoning models (e.g. gpt-oss) spend tokens "thinking" before
             # writing the final answer — that comes out of this same budget,
             # so it needs real headroom or content comes back empty/None.
-            max_tokens=4000,
+            # The 30-field schema with evidence quotes is a much larger payload
+            # than the original, hence the extra room.
+            max_tokens=8000,
         )
         if not resp.choices:
             last_err = f"empty response from provider (no choices): {resp.model_dump()}"
@@ -289,6 +384,37 @@ def save_summary(call_id, meta, a_pct, c_pct, num_turns, result: CallSummary):
         "objections": result.objections, "action_items": result.action_items,
         "red_flags": result.red_flags, "language": result.language,
         "model": MODEL,
+
+        # Flat columns — what the list view filters and aggregates on.
+        # NB: `call_type` already holds Zoho's Inbound/Outbound direction, so
+        # the model's classification goes to `call_category` to avoid clobbering it.
+        "call_category": result.call_type,
+        "property_context": result.property_context,
+        "property_details": result.property_details,
+        "conversion_likelihood": result.conversion_likelihood,
+        "next_step_secured": result.next_step_secured,
+        # Flattened so the list view can flag it without fetching `analysis`.
+        "agent_commitment_due": any(
+            c.who == "agent" and c.due for c in result.commitments),
+        "competitor_mentioned": result.competitor_mentioned,
+        "stakeholders": result.stakeholders,
+        "buying_signals": result.buying_signals,
+        "risk_flags": result.risk_flags,
+
+        # Nested structures — only ever rendered on a single call's page, so
+        # they live in one jsonb column rather than a dozen more columns.
+        "analysis": {
+            "budget": result.budget_detail.model_dump(),
+            "timeline": result.timeline_detail.model_dump(),
+            "objections": [o.model_dump() for o in result.objections_detail],
+            "commitments": [c.model_dump() for c in result.commitments],
+            "scorecard": result.scorecard.model_dump(),
+            "coaching": {
+                "did_well": result.did_well,
+                "improvements": result.improvements,
+                "suggested_followup": result.suggested_followup,
+            },
+        },
     }
     r = requests.post(f"{SUPABASE_URL}/rest/v1/call_summaries",
                        headers=sb_headers({"Prefer": "resolution=merge-duplicates,return=minimal"}),

@@ -29,6 +29,41 @@ function scoreBand(score) {
   return 'low';
 }
 
+const DIMENSION_LABELS = {
+  opening_identification: 'Opening & identification',
+  need_capture: 'Need capture',
+  objection_handling: 'Objection handling',
+  next_step_secured: 'Next step secured',
+  language_rapport: 'Language & rapport',
+};
+
+const PROPERTY_LABELS = {
+  new_build: 'New build', renovation: 'Renovation', not_discussed: 'Not discussed',
+};
+
+const LIKELIHOOD_TONE = {
+  hot: 'positive', warm: 'neutral', cold: 'neutral', dead: 'negative', unknown: 'neutral',
+};
+
+// A field extracted with supporting evidence. Renders nothing when the value is
+// absent — a null budget is the correct answer for most calls, not a gap to fill.
+function EvidenceRow({ label, field, fallback }) {
+  const value = field?.value || fallback;
+  if (!value) return null;
+  return (
+    <tr>
+      <th>{label}</th>
+      <td>
+        {value}
+        {field?.confidence && field.confidence !== 'high' && (
+          <span className="confidence-tag"> {field.confidence} confidence</span>
+        )}
+        {field?.evidence && <div className="evidence-line">“{field.evidence}”</div>}
+      </td>
+    </tr>
+  );
+}
+
 function ListCard({ title, items, tone = 'plain', empty }) {
   return (
     <section className="panel">
@@ -78,7 +113,26 @@ export default function CallAnalysisPage({ params }) {
   }
 
   const req = data.requirements || {};
-  const hasRequirements = req.kitchenType || req.budget || req.location || req.timeline;
+
+  // Only render a dimension the model actually returned. Rows summarized before
+  // the schema expanded have no scorecard at all, so the section disappears
+  // rather than showing five empty rows.
+  const scorecard = Object.entries(data.scorecard || {})
+    .filter(([, d]) => d && typeof d === 'object');
+
+  const hasLeadDetails = Boolean(
+    (data.propertyContext && data.propertyContext !== 'not_discussed') ||
+    data.propertyDetails || req.location || req.kitchenType ||
+    data.budget?.value || req.budget || data.timeline?.value || req.timeline ||
+    data.stakeholders?.length || data.competitorMentioned ||
+    (data.conversionLikelihood && data.conversionLikelihood !== 'unknown')
+  );
+
+  const hasCoaching = Boolean(
+    data.coaching?.did_well?.length ||
+    data.coaching?.improvements?.length ||
+    data.coaching?.suggested_followup
+  );
 
   return (
     <main className="analytics-main">
@@ -162,7 +216,145 @@ export default function CallAnalysisPage({ params }) {
         </div>
       </div>
 
+      {/* Scorecard — dimensions the call didn't exercise show N/A, never a low score */}
+      {scorecard.length > 0 && (
+        <section className="panel">
+          <h3 className="panel-title">Call Scorecard</h3>
+          <table className="score-table">
+            <thead>
+              <tr><th>DIMENSION</th><th>SCORE</th><th>EVIDENCE</th><th>WHAT WAS MISSED</th></tr>
+            </thead>
+            <tbody>
+              {scorecard.map(([key, d]) => (
+                <tr key={key}>
+                  <td className="dim-name">{DIMENSION_LABELS[key] || key}</td>
+                  <td className="col-center">
+                    {d.applicable && d.score != null
+                      ? <span className={`score-badge score-badge-${scoreBand(d.score)}`}>{d.score}/5</span>
+                      : <span className="na-tag" title="This call gave no opportunity to demonstrate it">N/A</span>}
+                  </td>
+                  <td className="quote-cell">{d.evidence ? `“${d.evidence}”` : '—'}</td>
+                  <td>{d.missed || '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      )}
+
+      {/* Lead details — evidence shown inline so a manager can verify without the transcript */}
+      {hasLeadDetails && (
+        <section className="panel">
+          <h3 className="panel-title">Lead Details</h3>
+          <table className="kv-table">
+            <tbody>
+              {data.propertyContext && data.propertyContext !== 'not_discussed' && (
+                <tr><th>Property</th><td>{PROPERTY_LABELS[data.propertyContext] || data.propertyContext}</td></tr>
+              )}
+              {data.propertyDetails && <tr><th>Details</th><td>{data.propertyDetails}</td></tr>}
+              {req.location && <tr><th>Location</th><td>{req.location}</td></tr>}
+              {req.kitchenType && <tr><th>Kitchen type</th><td>{req.kitchenType}</td></tr>}
+              <EvidenceRow label="Budget" field={data.budget} fallback={req.budget} />
+              <EvidenceRow label="Timeline" field={data.timeline} fallback={req.timeline} />
+              {data.stakeholders?.length > 0 && (
+                <tr><th>Others involved</th><td>{data.stakeholders.join(', ')}</td></tr>
+              )}
+              {data.competitorMentioned && (
+                <tr><th>Also considering</th><td>{data.competitorMentioned}</td></tr>
+              )}
+              {data.conversionLikelihood && data.conversionLikelihood !== 'unknown' && (
+                <tr>
+                  <th>Conversion likelihood</th>
+                  <td><span className={`badge badge-${LIKELIHOOD_TONE[data.conversionLikelihood]}`}>
+                    {data.conversionLikelihood}
+                  </span></td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </section>
+      )}
+
+      {/* Commitments — who owes what, by when */}
+      {data.commitments?.length > 0 && (
+        <section className="panel">
+          <h3 className="panel-title">Commitments Made</h3>
+          <table className="score-table">
+            <thead><tr><th>WHO</th><th>PROMISED</th><th>BY</th></tr></thead>
+            <tbody>
+              {data.commitments.map((c, i) => (
+                <tr key={i}>
+                  <td className="dim-name">{c.who === 'agent' ? data.agent : data.customer}</td>
+                  <td>{c.what}</td>
+                  <td>{c.due
+                    ? <span className="badge badge-negative">{c.due}</span>
+                    : <span className="muted-cell">no date given</span>}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      )}
+
+      {/* Objections with whether the agent actually responded */}
+      {data.objectionsDetail?.length > 0 && (
+        <section className="panel">
+          <h3 className="panel-title">Objections</h3>
+          <table className="score-table">
+            <thead><tr><th>OBJECTION</th><th>ADDRESSED</th><th>EVIDENCE</th></tr></thead>
+            <tbody>
+              {data.objectionsDetail.map((o, i) => (
+                <tr key={i}>
+                  <td className="dim-name">{o.objection}</td>
+                  <td className="col-center">
+                    {o.addressed
+                      ? <span className="badge badge-positive">Addressed</span>
+                      : <span className="badge badge-negative">Ignored</span>}
+                  </td>
+                  <td className="quote-cell">{o.evidence ? `“${o.evidence}”` : '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      )}
+
+      {/* Coaching */}
+      {hasCoaching && (
+        <section className="panel">
+          <h3 className="panel-title">Coaching</h3>
+          <div className="coach-grid">
+            {data.coaching.did_well?.length > 0 && (
+              <div>
+                <h4 className="coach-heading">Did well</h4>
+                <ul className="item-list">{data.coaching.did_well.map((s, i) => <li key={i}>{s}</li>)}</ul>
+              </div>
+            )}
+            {data.coaching.improvements?.length > 0 && (
+              <div>
+                <h4 className="coach-heading">Highest-impact improvements</h4>
+                <ul className="item-list item-list-negative">
+                  {data.coaching.improvements.map((s, i) => <li key={i}>{s}</li>)}
+                </ul>
+              </div>
+            )}
+          </div>
+          {data.coaching.suggested_followup && (
+            <div className="next-action">
+              <span className="next-action-label">Suggested follow-up message</span>
+              <span>{data.coaching.suggested_followup}</span>
+            </div>
+          )}
+        </section>
+      )}
+
       <div className="panel-grid">
+        {data.buyingSignals?.length > 0 && (
+          <ListCard title="Buying Signals" items={data.buyingSignals} empty="" />
+        )}
+        {data.riskFlags?.length > 0 && (
+          <ListCard title="Risks" items={data.riskFlags} tone="negative" empty="" />
+        )}
         <ListCard title="Objections Raised" items={data.objections} empty="No objections raised." />
         <ListCard title="Action Items" items={data.actionItems} empty="No action items recorded." />
         <ListCard title="Red Flags" items={data.redFlags} tone="negative" empty="None — no issues detected." />
@@ -191,21 +383,6 @@ export default function CallAnalysisPage({ params }) {
           </table>
         </section>
       </div>
-
-      {/* Requirements */}
-      {hasRequirements && (
-        <section className="panel">
-          <h3 className="panel-title">Customer Requirements</h3>
-          <table className="kv-table">
-            <tbody>
-              {req.kitchenType && <tr><th>Kitchen type</th><td>{req.kitchenType}</td></tr>}
-              {req.budget && <tr><th>Budget</th><td>{req.budget}</td></tr>}
-              {req.location && <tr><th>Location</th><td>{req.location}</td></tr>}
-              {req.timeline && <tr><th>Timeline</th><td>{req.timeline}</td></tr>}
-            </tbody>
-          </table>
-        </section>
-      )}
 
       {/* Agent conduct notes */}
       {data.professionalismNotes && (

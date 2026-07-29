@@ -1,10 +1,15 @@
 import { NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
 
+// The list view deliberately excludes `analysis` — the nested payload is only
+// needed on a single call's page, and pulling it for every row would bloat the
+// response.
 const LIST_COLS =
   'call_id, agent, customer, start_time, duration_seconds, agent_talk_pct, num_turns, ' +
   'call_outcome, customer_sentiment, interest_level, agent_politeness, ' +
-  'agent_professionalism, red_flags, objections, summary';
+  'agent_professionalism, red_flags, objections, summary, ' +
+  'call_category, property_context, conversion_likelihood, next_step_secured, ' +
+  'agent_commitment_due';
 
 // Voicemail / IVR / answering-machine pickups get politeness+professionalism
 // scores from the model even though the agent barely spoke and no two-way
@@ -55,6 +60,11 @@ function attentionReasons(r) {
   if (r.agent_professionalism != null && r.agent_professionalism <= 2) reasons.push('Low professionalism');
   if (r.agent_politeness != null && r.agent_politeness <= 2) reasons.push('Low politeness');
   if (r.customer_sentiment === 'negative') reasons.push('Negative sentiment');
+  // An agent promise with a stated deadline is the most actionable thing a
+  // manager can chase: "promised a quote by Friday" is concrete and checkable.
+  // Flat column, not analysis.commitments, so this evaluates identically in the
+  // list view (which doesn't fetch the nested payload) and on the detail page.
+  if (r.agent_commitment_due) reasons.push('Promised follow-up with deadline');
   return reasons;
 }
 
@@ -80,6 +90,10 @@ function toListItem(r) {
     objectionCount: (r.objections || []).length,
     redFlags: r.red_flags || [],
     summary: r.summary,
+    callCategory: r.call_category,
+    propertyContext: r.property_context,
+    conversionLikelihood: r.conversion_likelihood,
+    nextStepSecured: r.next_step_secured,
     hadConversation: scored,
     status: reasons.length ? 'needs_attention' : 'good',
     reasons,
@@ -120,6 +134,25 @@ async function getOne(callId) {
     language: data.language,
     model: data.model,
     summarizedAt: data.summarized_at,
+
+    // Richer extraction. Null on rows summarized before the schema expanded —
+    // the UI hides each section when its data is missing.
+    callCategory: data.call_category,
+    propertyContext: data.property_context,
+    propertyDetails: data.property_details,
+    conversionLikelihood: data.conversion_likelihood,
+    nextStepSecured: data.next_step_secured,
+    competitorMentioned: data.competitor_mentioned,
+    stakeholders: data.stakeholders || [],
+    buyingSignals: data.buying_signals || [],
+    riskFlags: data.risk_flags || [],
+    budget: data.analysis?.budget || null,
+    timeline: data.analysis?.timeline || null,
+    objectionsDetail: data.analysis?.objections || [],
+    commitments: data.analysis?.commitments || [],
+    scorecard: data.analysis?.scorecard || null,
+    coaching: data.analysis?.coaching || null,
+
     hadConversation: hadConversation(data),
     status: hadConversation(data) && attentionReasons(data).length ? 'needs_attention' : 'good',
     reasons: hadConversation(data) ? attentionReasons(data) : [],
