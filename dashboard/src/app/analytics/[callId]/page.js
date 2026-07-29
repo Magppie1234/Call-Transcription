@@ -117,8 +117,11 @@ export default function CallAnalysisPage({ params }) {
   // Only render a dimension the model actually returned. Rows summarized before
   // the schema expanded have no scorecard at all, so the section disappears
   // rather than showing five empty rows.
-  const scorecard = Object.entries(data.scorecard || {})
+  const allDimensions = Object.entries(data.scorecard || {})
     .filter(([, d]) => d && typeof d === 'object');
+  // On a voicemail every dimension is N/A, and the banner above already says
+  // why — five empty rows would add nothing.
+  const scorecard = allDimensions.some(([, d]) => d.applicable) ? allDimensions : [];
 
   const hasLeadDetails = Boolean(
     (data.propertyContext && data.propertyContext !== 'not_discussed') ||
@@ -166,9 +169,9 @@ export default function CallAnalysisPage({ params }) {
       {!data.hadConversation && (
         <div className="info-bar">
           <strong>Not scored.</strong> This call reached a voicemail, IVR, or went unanswered
-          ({data.numTurns ?? 0} speaker turns), so no real conversation took place. The agent
-          barely spoke, so politeness and professionalism aren&apos;t rated here and this call
-          doesn&apos;t count towards their averages.
+          {' '}({data.numTurns ?? 0} speaker {data.numTurns === 1 ? 'turn' : 'turns'}), so no real
+          conversation took place. The agent barely spoke, so politeness and professionalism
+          aren&apos;t rated here and this call doesn&apos;t count towards their averages.
         </div>
       )}
 

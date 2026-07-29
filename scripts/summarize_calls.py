@@ -183,8 +183,12 @@ SYSTEM = (
     "A null with confidence 'low' is correct and useful; a plausible guess is harmful, because "
     "these fields are read as real pipeline facts. Most calls are short and will legitimately "
     "have many nulls — that is the expected result, not a failure.\n"
-    "7. Every `evidence` field must be a VERBATIM span copied from the transcript, never a "
-    "paraphrase. If you cannot quote it, the value should be null.\n"
+    "7. Every `evidence` field must be text COPIED CHARACTER-FOR-CHARACTER from the transcript. "
+    "To quote two separate moments, join them with ' ... ' — each piece must still be copied "
+    "exactly. Never describe, summarise, translate or tidy up the wording; if you cannot copy "
+    "an exact span, set evidence to null. Quotes are automatically checked against the "
+    "transcript and silently discarded if they do not match, so an invented quote just loses "
+    "the evidence.\n"
     "8. In `scorecard`, set applicable=false when the call gave no opportunity to demonstrate "
     "that behaviour, and leave score null. Do NOT score a dimension low because it did not "
     "happen. A voicemail, wrong number or 20-second call must come back with applicable=false "
@@ -281,6 +285,45 @@ def render_transcript(entries, agent_sid, agent_name, customer_name):
     return "\n".join(lines)
 
 # ── JSON extraction (the model may wrap JSON in prose/fences despite instructions) ──
+def _norm(s):
+    """Compare on letters+digits only: the transcripts are messy romanised
+    Hinglish, so punctuation/spacing differences are not real mismatches."""
+    return re.sub(r"[^a-z0-9]+", "", (s or "").lower())
+
+def verify_evidence(result, transcript_text):
+    """Delete any `evidence` string that isn't actually in the transcript.
+
+    The whole point of evidence is that a manager can verify a claim, so it has
+    to be checked rather than trusted. Measured on real calls, the model gets
+    this right about 3/4 of the time: most quotes are verbatim or several real
+    spans joined with "..." (fine, kept), but it sometimes writes a description
+    instead of a quote ("Matched Hindi/English mix; courteous throughout") or
+    reconstructs Hinglish it can't reproduce exactly. Those are dropped — a
+    missing quote is honest, an invented one is not.
+
+    Returns the number of quotes dropped.
+    """
+    tn = _norm(transcript_text)
+
+    def is_real(quote):
+        frags = [f for f in re.split(r"\.\.\.|…", quote) if _norm(f)]
+        return bool(frags) and all(_norm(f) in tn for f in frags)
+
+    dropped = 0
+    def scrub(obj):
+        nonlocal dropped
+        if getattr(obj, "evidence", None) and not is_real(obj.evidence):
+            obj.evidence = None
+            dropped += 1
+
+    scrub(result.budget_detail)
+    scrub(result.timeline_detail)
+    for o in result.objections_detail:
+        scrub(o)
+    for name in type(result.scorecard).model_fields:
+        scrub(getattr(result.scorecard, name))
+    return dropped
+
 def extract_json(text):
     text = text.strip()
     fence = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
@@ -489,14 +532,18 @@ def main():
         except Exception as e:
             print(f"  ❌ [{i}] {cid}: {e}"); continue
 
+        # Never store a quote that isn't in the transcript.
+        dropped = verify_evidence(result, transcript_text)
+
         try:
             save_summary(cid, meta, a_pct, c_pct, len(entries), result)
         except requests.RequestException as e:
             print(f"  ❌ [{i}] {cid}: Supabase write failed: {e}"); continue
 
         saved += 1
+        note = f"  ({dropped} unverifiable quote{'s' if dropped != 1 else ''} dropped)" if dropped else ""
         print(f"  ✅ [{i}] {meta['agent']} → {meta['customer']}: "
-              f"{result.call_outcome} / {result.customer_sentiment} / polite {result.agent_politeness}/5")
+              f"{result.call_outcome} / {result.customer_sentiment} / polite {result.agent_politeness}/5{note}")
 
     print(f"\n✅ Saved {saved} summaries to Supabase.")
     remaining = len([f for f in TDIR.glob("*.json")
