@@ -174,11 +174,36 @@ class CallSummary(BaseModel):
     language: str = Field(description="language(s) used, e.g. 'Hindi/English', 'Telugu'")
 
     # ── Classification ───────────────────────────────────────────────────
+    # This field answers "what was the call ABOUT"; call_outcome above answers
+    # "how did it END". An earlier version shared three values with call_outcome
+    # (callback_requested, not_interested, wrong_number), so the model classified
+    # into call_outcome, found this one redundant and sent 93% of calls to
+    # "other". The values below deliberately do not overlap it.
     call_type: Literal[
-        "inquiry_follow_up", "quotation_discussion", "visit_scheduling",
-        "callback_requested", "not_interested", "voicemail_no_contact",
-        "wrong_number", "other",
-    ] = Field(description="what kind of call this was")
+        "product_introduction", "requirements_gathering", "quotation_discussion",
+        "visit_coordination", "follow_up_check_in", "internal_admin",
+        "no_contact", "other",
+    ] = Field(description=(
+        "The SUBJECT of the call - what was actually discussed. This is NOT the "
+        "call's result; the result belongs in call_outcome and must never be "
+        "duplicated here. Pick the ONE dominant subject:\n"
+        "- product_introduction: explaining what Magppie sells (stone kitchens, "
+        "wardrobes, materials, warranty) to someone learning about it.\n"
+        "- requirements_gathering: capturing the customer's kitchen size, layout, "
+        "property, measurements or design needs.\n"
+        "- quotation_discussion: a specific price, per-sqft rate or quotation was "
+        "the main thing discussed.\n"
+        "- visit_coordination: arranging, confirming or chasing a showroom, "
+        "experience-centre or site visit.\n"
+        "- follow_up_check_in: chasing a previous enquiry with no substantive new "
+        "discussion (customer busy, will revert, asked for a catalogue).\n"
+        "- internal_admin: the other party is a Magppie colleague, or the call is "
+        "CRM housekeeping (lead transfer, duplicate leads, verifying stored "
+        "details) rather than selling.\n"
+        "- no_contact: nothing was discussed at all - voicemail, IVR, no answer, "
+        "or the wrong person picked up.\n"
+        "- other: ONLY if none of the above can apply. Do NOT use 'other' just "
+        "because several subjects were covered - pick the dominant one."))
 
     # ── Lead intelligence (null unless actually discussed) ───────────────
     property_context: Literal["new_build", "renovation", "not_discussed"] = Field(
@@ -263,34 +288,67 @@ SYSTEM = (
 )
 
 # ── Zoho auth + metadata (real names) ──────────────────────────────────────
-def get_token():
-    try:
-        c = json.loads(TOKEN_CACHE.read_text())
-        if c.get("token") and c.get("expiresAt", 0) > time.time() * 1000 + 120_000:
-            return c["token"]
-    except Exception:
-        pass
-    r = requests.post(f"{ZOHO_ACC}/oauth/v2/token", data={
-        "refresh_token": os.getenv("ZOHO_REFRESH_TOKEN"),
-        "client_id":     os.getenv("ZOHO_CLIENT_ID"),
-        "client_secret": os.getenv("ZOHO_CLIENT_SECRET"),
-        "grant_type":    "refresh_token",
-    }, timeout=30)
-    d = r.json()
-    if not d.get("access_token"):
-        print("❌ Zoho token failed:", d); sys.exit(1)
-    TOKEN_CACHE.write_text(json.dumps({
-        "token": d["access_token"],
-        "expiresAt": int(time.time() * 1000) + int(d.get("expires_in", 3600)) * 1000,
-    }))
-    return d["access_token"]
+_TOKEN = {"value": None, "expires_at": 0}
 
-def fetch_meta(token, call_id):
+def get_token(force=False):
+    """Zoho access token, cached in-process and on disk.
+
+    Call this every iteration rather than once per run: tokens last 3600s and a
+    full backfill takes longer than that. The old code fetched once up front, and
+    because fetch_meta() treats any non-OK response as "no metadata", an expired
+    token silently skipped every remaining call while the run still reported
+    success.
+    """
+    now = time.time()
+    if not force and _TOKEN["value"] and _TOKEN["expires_at"] > now + 120:
+        return _TOKEN["value"]
+    if not force:
+        try:
+            c = json.loads(TOKEN_CACHE.read_text())
+            if c.get("token") and c.get("expiresAt", 0) > now * 1000 + 120_000:
+                _TOKEN.update(value=c["token"], expires_at=c["expiresAt"] / 1000)
+                return c["token"]
+        except Exception:
+            pass
+
+    # Zoho rate-limits token generation, and parallel processes with no cache file
+    # can burst past it — that surfaced as a transient "invalid_code" that killed a
+    # whole run. Back off and retry rather than exiting.
+    last = None
+    for attempt in range(4):
+        if attempt:
+            time.sleep(2 ** attempt)
+        r = requests.post(f"{ZOHO_ACC}/oauth/v2/token", data={
+            "refresh_token": os.getenv("ZOHO_REFRESH_TOKEN"),
+            "client_id":     os.getenv("ZOHO_CLIENT_ID"),
+            "client_secret": os.getenv("ZOHO_CLIENT_SECRET"),
+            "grant_type":    "refresh_token",
+        }, timeout=30)
+        d = r.json()
+        if d.get("access_token"):
+            exp = now + int(d.get("expires_in", 3600))
+            _TOKEN.update(value=d["access_token"], expires_at=exp)
+            try:
+                TOKEN_CACHE.write_text(json.dumps(
+                    {"token": d["access_token"], "expiresAt": int(exp * 1000)}))
+            except OSError:
+                pass          # cache is an optimisation, not a requirement
+            return d["access_token"]
+        last = d
+        print(f"  ⚠ Zoho token attempt {attempt + 1}/4 failed: {last}")
+    print("❌ Zoho token failed after 4 attempts:", last); sys.exit(1)
+
+def fetch_meta(token, call_id, _retried=False):
     """Fetch the CRM-verified agent/customer names for one call. Never fabricated."""
     fields = "id,Subject,Owner,Who_Id,What_Id,Call_Type,Call_Duration_in_seconds,Call_Start_Time"
     r = requests.get(f"{ZOHO_API}/crm/v7/Calls/{call_id}",
                      params={"fields": fields},
                      headers={"Authorization": f"Zoho-oauthtoken {token}"}, timeout=30)
+    # 401 means the token aged out mid-run. Without this the call would be
+    # silently skipped as "no CRM metadata", which looks identical to a genuinely
+    # missing record.
+    if r.status_code == 401 and not _retried:
+        return fetch_meta(get_token(force=True), call_id, _retried=True)
     if not r.ok:
         return None
     rec = (r.json().get("data") or [{}])[0]
@@ -587,7 +645,7 @@ def main():
 
     print(f"🧠 Summarizing {len(ids)} call(s) with {MODEL} via {PROVIDER} "
           f"(paced at {MIN_INTERVAL}s/request)\n")
-    token = get_token()
+    get_token()   # fail fast on bad credentials before spending on the LLM
     saved = 0
     for i, cid in enumerate(ids, 1):
         if i > 1:
@@ -599,7 +657,9 @@ def main():
         data = json.loads(tpath.read_text())
         entries = data.get("diarized_transcript", {}).get("entries", [])
 
-        meta = fetch_meta(token, cid)
+        # Per-iteration, not hoisted: cached in-process, so this is free until
+        # the token nears expiry, at which point it transparently refreshes.
+        meta = fetch_meta(get_token(), cid)
         if meta is None:
             print(f"  ⚠ [{i}] could not fetch CRM meta for {cid}, skipping"); continue
 
