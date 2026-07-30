@@ -30,7 +30,7 @@ re-running picks up where it left off.
 import os, re, sys, json, time, argparse
 from pathlib import Path
 from typing import Optional, List, Literal
-from pydantic import BaseModel, Field, ValidationError, model_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 from dotenv import load_dotenv
 import requests
 from openai import OpenAI
@@ -155,6 +155,17 @@ class CallSummary(BaseModel):
     interest_level: Literal["hot", "warm", "cold", "unknown"]
     agent_politeness: int = Field(description="1 (rude) to 5 (very polite)")
     agent_professionalism: int = Field(description="1 (poor) to 5 (excellent): greeting, self-intro, clear close")
+
+    # Models emit 0 on voicemails to mean "not applicable", but these two columns
+    # are NOT NULL CHECK (between 1 and 5), so Postgres rejects the whole row and
+    # the call is lost entirely — a 400 that cost us the summary, not just the
+    # score. Clamp into range instead. Safe because nothing displays or averages
+    # these for a call that never happened: the API only aggregates calls with
+    # >= 8 turns, and both the list and detail pages render "—" for the rest.
+    @field_validator("agent_politeness", "agent_professionalism")
+    @classmethod
+    def _in_range(cls, v):
+        return v if v is None else min(5, max(1, v))
     professionalism_notes: Optional[str] = Field(None, description="brief note on agent conduct")
     customer_requirements: Requirements
     objections: List[str] = Field(default_factory=list, description="objections the customer raised")
