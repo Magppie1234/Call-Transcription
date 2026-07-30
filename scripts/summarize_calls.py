@@ -59,7 +59,7 @@ PROVIDER       = os.getenv("SUMMARY_PROVIDER") or ("openai" if OPENAI_KEY else "
 if PROVIDER == "openai":
     API_KEY  = OPENAI_KEY
     BASE_URL = None                       # SDK default: api.openai.com/v1
-    MODEL    = os.getenv("SUMMARY_MODEL", "gpt-5-mini")
+    MODEL    = os.getenv("SUMMARY_MODEL", "gpt-4.1-nano")
     # Paid, so no daily request cap and no free-tier pacing. The floor below
     # only exists to be polite to the API; the SDK retries 429s on its own.
     DAILY_LIMIT  = int(os.getenv("SUMMARY_DAILY_LIMIT", "10000"))
@@ -78,8 +78,9 @@ PRICING = {
     "gpt-5":       (1.25, 10.00),
     "gpt-5-mini":  (0.25,  2.00),
     "gpt-5-nano":  (0.05,  0.40),
-    "gpt-4.1":     (2.00,  8.00),
+    "gpt-4.1":      (2.00, 8.00),
     "gpt-4.1-mini": (0.40, 1.60),
+    "gpt-4.1-nano": (0.10, 0.40),
     "gpt-4o":      (2.50, 10.00),
     "gpt-4o-mini": (0.15,  0.60),
 }
