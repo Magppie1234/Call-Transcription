@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
 summarize_calls.py — Generate a structured conversation summary + metrics for
-each transcribed call, using a free LLM via OpenRouter.
+each transcribed call, using an LLM.
 
 - Reads transcripts from out/transcripts/{id}.mp3.json
 - Pulls the REAL agent/customer names from Zoho CRM (never invented)
 - Computes talk-ratio and turn count for free from the diarization
-- Sends the transcript to openai/gpt-oss-120b:free (via OpenRouter) with a
+- Sends the transcript to the configured model with a
   JSON schema described in the prompt; the model is told to use ONLY the
   transcript and the CRM-provided names, and to NEVER invent a name —
   anything not in the data comes back null / "unknown"
@@ -17,13 +17,15 @@ Usage:
     python scripts/summarize_calls.py --ids id1,id2
     python scripts/summarize_calls.py                  # all transcribed, unsummarized
 
-Requires OPENROUTER_API_KEY in .env (get one at openrouter.ai/keys) and
+Requires OPENAI_API_KEY in .env (platform.openai.com/api-keys) and
 SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY (same as the rest of the pipeline).
+Override the model with SUMMARY_MODEL.
 
-The free model tier is rate-limited to 50 requests/day, 20/minute — this
-script paces itself under both limits and stops cleanly at the daily cap;
-already-summarized calls (tracked in Supabase) are skipped, so re-running on
-a later day picks up where it left off.
+If no OPENAI_API_KEY is set the script falls back to OPENROUTER_API_KEY and the
+free Nemotron model, which is rate-limited to 50 requests/day and 20/minute —
+it then paces itself under both limits and stops cleanly at the daily cap.
+Either way, already-summarized calls (tracked in Supabase) are skipped, so
+re-running picks up where it left off.
 """
 import os, re, sys, json, time, argparse
 from pathlib import Path
@@ -42,15 +44,45 @@ ZOHO_API    = os.getenv("ZOHO_API_DOMAIN", "https://www.zohoapis.in")
 ZOHO_ACC    = os.getenv("ZOHO_ACCOUNTS_DOMAIN", "https://accounts.zoho.in")
 TOKEN_CACHE = BASE / ".zoho_token_cache.json"
 
-OPENROUTER_KEY = os.getenv("OPENROUTER_API_KEY")
-MODEL          = os.getenv("SUMMARY_MODEL", "nvidia/nemotron-3-ultra-550b-a55b:free")
-
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
-# Free-tier caps: 50 requests/day, 20/minute. Stay comfortably under both.
-DAILY_LIMIT   = 45
-MIN_INTERVAL  = 4.0  # seconds between requests (15/min, under the 20/min cap)
+# ── LLM provider ───────────────────────────────────────────────────────────
+# OpenAI is the default. OPENROUTER_API_KEY is still honoured as a fallback so
+# the old free-tier path keeps working if no OpenAI key is present — the two
+# speak the same wire protocol, only the base URL, model names and rate limits
+# differ. Set SUMMARY_PROVIDER to force one when both keys are set.
+OPENAI_KEY     = os.getenv("OPENAI_API_KEY")
+OPENROUTER_KEY = os.getenv("OPENROUTER_API_KEY")
+PROVIDER       = os.getenv("SUMMARY_PROVIDER") or ("openai" if OPENAI_KEY else "openrouter")
+
+if PROVIDER == "openai":
+    API_KEY  = OPENAI_KEY
+    BASE_URL = None                       # SDK default: api.openai.com/v1
+    MODEL    = os.getenv("SUMMARY_MODEL", "gpt-5-mini")
+    # Paid, so no daily request cap and no free-tier pacing. The floor below
+    # only exists to be polite to the API; the SDK retries 429s on its own.
+    DAILY_LIMIT  = int(os.getenv("SUMMARY_DAILY_LIMIT", "10000"))
+    MIN_INTERVAL = float(os.getenv("SUMMARY_MIN_INTERVAL", "0.2"))
+else:
+    API_KEY  = OPENROUTER_KEY
+    BASE_URL = "https://openrouter.ai/api/v1"
+    MODEL    = os.getenv("SUMMARY_MODEL", "nvidia/nemotron-3-ultra-550b-a55b:free")
+    # Free-tier caps: 50 requests/day, 20/minute. Stay comfortably under both.
+    DAILY_LIMIT  = int(os.getenv("SUMMARY_DAILY_LIMIT", "45"))
+    MIN_INTERVAL = float(os.getenv("SUMMARY_MIN_INTERVAL", "4.0"))
+
+# USD per 1M tokens, for the run-cost readout only. Unlisted models print no
+# cost rather than a wrong one.
+PRICING = {
+    "gpt-5":       (1.25, 10.00),
+    "gpt-5-mini":  (0.25,  2.00),
+    "gpt-5-nano":  (0.05,  0.40),
+    "gpt-4.1":     (2.00,  8.00),
+    "gpt-4.1-mini": (0.40, 1.60),
+    "gpt-4o":      (2.50, 10.00),
+    "gpt-4o-mini": (0.15,  0.60),
+}
 
 # ── Structured schema the model must fill (all metrics) ────────────────────
 class Requirements(BaseModel):
@@ -341,7 +373,23 @@ def extract_json(text):
                 return text[start:i + 1]
     raise ValueError("unbalanced JSON object in response")
 
-# ── LLM call (OpenRouter, free model) with schema-validation retry ─────────
+# ── LLM call with schema-validation retry ──────────────────────────────────
+# Reasoning models (gpt-5*, gpt-oss) spend tokens "thinking" before writing the
+# final answer, and that comes out of the same budget — so this needs real
+# headroom or content comes back empty. The 30-field schema with evidence
+# quotes is a much larger payload than the original, hence the extra room.
+MAX_OUTPUT_TOKENS = 8000
+
+USAGE = {"in": 0, "out": 0}  # accumulated across the run, for the cost readout
+
+
+def token_limit_kwarg():
+    """OpenAI renamed max_tokens -> max_completion_tokens and rejects the old
+    name on gpt-5*/o-series. OpenRouter still expects max_tokens."""
+    key = "max_completion_tokens" if PROVIDER == "openai" else "max_tokens"
+    return {key: MAX_OUTPUT_TOKENS}
+
+
 def summarize(client, meta, transcript_text, retries=2):
     user = (
         f"CRM-verified names (use these exactly, do not change or invent):\n"
@@ -358,13 +406,11 @@ def summarize(client, meta, transcript_text, retries=2):
             model=MODEL,
             messages=messages,
             response_format={"type": "json_object"},
-            # Reasoning models (e.g. gpt-oss) spend tokens "thinking" before
-            # writing the final answer — that comes out of this same budget,
-            # so it needs real headroom or content comes back empty/None.
-            # The 30-field schema with evidence quotes is a much larger payload
-            # than the original, hence the extra room.
-            max_tokens=8000,
+            **token_limit_kwarg(),
         )
+        if getattr(resp, "usage", None):
+            USAGE["in"]  += resp.usage.prompt_tokens or 0
+            USAGE["out"] += resp.usage.completion_tokens or 0
         if not resp.choices:
             last_err = f"empty response from provider (no choices): {resp.model_dump()}"
             continue
@@ -470,19 +516,24 @@ def main():
     ap.add_argument("--ids", default="", help="comma-separated call IDs")
     ap.add_argument("--limit", type=int, default=0, help="cap this run (0 = no cap, but daily-limit still applies)")
     ap.add_argument("--daily-limit", type=int, default=DAILY_LIMIT,
-                     help=f"max requests this run, to stay under the free tier's 50/day cap (default {DAILY_LIMIT})")
+                     help=f"max requests this run (default {DAILY_LIMIT} for {PROVIDER})")
     ap.add_argument("--force", action="store_true",
                      help="re-summarize calls that already have a summary (e.g. after a prompt change)")
     args = ap.parse_args()
 
-    if not OPENROUTER_KEY:
-        print("❌ Missing OPENROUTER_API_KEY in .env — get one at openrouter.ai/keys")
+    if not API_KEY:
+        if PROVIDER == "openai":
+            print("❌ Missing OPENAI_API_KEY in .env — get one at platform.openai.com/api-keys")
+        else:
+            print("❌ Missing OPENROUTER_API_KEY in .env — get one at openrouter.ai/keys")
         sys.exit(1)
     if not SUPABASE_URL or not SUPABASE_KEY:
         print("❌ Missing SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY in .env")
         sys.exit(1)
 
-    client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=OPENROUTER_KEY)
+    # max_retries covers 429s and transient 5xxs with backoff, which matters on
+    # a several-hundred-call run.
+    client = OpenAI(api_key=API_KEY, base_url=BASE_URL, max_retries=5, timeout=180.0)
 
     done = fetch_summarized_ids()
     print(f"☁️  {len(done)} calls already summarized in Supabase"
@@ -500,13 +551,14 @@ def main():
     if args.limit:
         ids = ids[:args.limit]
     if len(ids) > args.daily_limit:
-        print(f"🔒 Capping this run at {args.daily_limit} calls (free-tier daily rate limit — "
-              f"{len(ids) - args.daily_limit} remain for a future run)")
+        print(f"🔒 Capping this run at {args.daily_limit} calls "
+              f"({len(ids) - args.daily_limit} remain for a future run)")
         ids = ids[:args.daily_limit]
     if not ids:
         print("🎉 Nothing to summarize."); return
 
-    print(f"🧠 Summarizing {len(ids)} call(s) with {MODEL} (paced at {MIN_INTERVAL}s/request)\n")
+    print(f"🧠 Summarizing {len(ids)} call(s) with {MODEL} via {PROVIDER} "
+          f"(paced at {MIN_INTERVAL}s/request)\n")
     token = get_token()
     saved = 0
     for i, cid in enumerate(ids, 1):
@@ -546,10 +598,20 @@ def main():
               f"{result.call_outcome} / {result.customer_sentiment} / polite {result.agent_politeness}/5{note}")
 
     print(f"\n✅ Saved {saved} summaries to Supabase.")
+
+    if USAGE["in"] or USAGE["out"]:
+        line = f"   {USAGE['in']:,} input + {USAGE['out']:,} output tokens"
+        rate = PRICING.get(MODEL)
+        if rate:
+            cost = USAGE["in"] / 1e6 * rate[0] + USAGE["out"] / 1e6 * rate[1]
+            line += f" ≈ ${cost:.2f}"
+        print(line)
+
     remaining = len([f for f in TDIR.glob("*.json")
                      if f.name.removesuffix(".mp3.json") not in done]) - saved
     if remaining > 0:
-        print(f"   {remaining} calls still unsummarized — re-run tomorrow (free-tier daily cap).")
+        tail = " — re-run tomorrow (free-tier daily cap)." if PROVIDER == "openrouter" else " — re-run to continue."
+        print(f"   {remaining} calls still unsummarized{tail}")
 
 if __name__ == "__main__":
     main()
