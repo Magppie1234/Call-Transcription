@@ -30,7 +30,7 @@ re-running picks up where it left off.
 import os, re, sys, json, time, argparse
 from pathlib import Path
 from typing import Optional, List, Literal
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, model_validator
 from dotenv import load_dotenv
 import requests
 from openai import OpenAI
@@ -59,7 +59,7 @@ PROVIDER       = os.getenv("SUMMARY_PROVIDER") or ("openai" if OPENAI_KEY else "
 if PROVIDER == "openai":
     API_KEY  = OPENAI_KEY
     BASE_URL = None                       # SDK default: api.openai.com/v1
-    MODEL    = os.getenv("SUMMARY_MODEL", "gpt-4.1-nano")
+    MODEL    = os.getenv("SUMMARY_MODEL", "gpt-4.1-mini")
     # Paid, so no daily request cap and no free-tier pacing. The floor below
     # only exists to be polite to the API; the SDK retries 429s on its own.
     DAILY_LIMIT  = int(os.getenv("SUMMARY_DAILY_LIMIT", "10000"))
@@ -116,6 +116,22 @@ class Dimension(BaseModel):
     score:      Optional[int] = Field(None, description="1 (poor) to 5 (excellent); null when not applicable")
     evidence:   Optional[str] = Field(None, description="verbatim quote supporting the score")
     missed:     Optional[str] = Field(None, description="what would have been better; null if nothing")
+
+    # Weaker models emit contradictory pairs — applicable=true with no score, or
+    # applicable=false alongside a score and a quote. Both render as nonsense in
+    # the scorecard table, so collapse them to one consistent reading here rather
+    # than letting the UI guess. A dimension the model could not put a number on
+    # was, in effect, not assessed.
+    @model_validator(mode="after")
+    def _coherent(self):
+        if self.score is not None and not 1 <= self.score <= 5:
+            self.score = None
+        if self.applicable and self.score is None:
+            self.applicable = False
+        if not self.applicable:
+            self.score = None
+            self.evidence = None
+        return self
 
 class Scorecard(BaseModel):
     opening_identification: Dimension = Field(description="named themselves, the company, and why they were calling")
