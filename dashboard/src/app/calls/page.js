@@ -110,6 +110,7 @@ export default function CallsPage() {
                 <th>DATE & TIME</th>
                 <th>DURATION</th>
                 <th>TYPE</th>
+                <th>LOCATION</th>
                 <th>TRANSCRIPT</th>
                 <th></th>
               </tr>
@@ -144,6 +145,7 @@ export default function CallsPage() {
                         {call.callType}
                       </span>
                     </td>
+                    <td className="location-cell">{call.city || '—'}</td>
                     <td>
                       {call.hasTranscript ? (
                         <span className="transcript-badge">✨ Transcribed</span>

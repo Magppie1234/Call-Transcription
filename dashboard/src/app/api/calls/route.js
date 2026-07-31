@@ -38,6 +38,22 @@ async function listIds(table) {
 const listTranscriptIds = () => listIds('transcripts');
 const listSummarizedIds = () => listIds('call_summaries');
 
+// call_id -> { city, state }, resolved from the caller's Zoho Lead/Contact/Account
+// by scripts/backfill_call_states.py. Same pagination concern as listIds.
+async function listLocations() {
+  const locations = new Map();
+  const PAGE = 1000;
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase
+      .from('transcripts').select('call_id,city,state').range(from, from + PAGE - 1);
+    if (error) throw new Error(`transcripts (locations): ${error.message}`);
+    for (const r of data) {
+      if (r.city || r.state) locations.set(r.call_id, { city: r.city, state: r.state });
+    }
+    if (data.length < PAGE) return locations;
+  }
+}
+
 async function getZohoToken() {
   // Return cached token if still valid (with 2 min buffer)
   const cached = await readTokenCache();
@@ -79,13 +95,14 @@ async function getZohoToken() {
   throw new Error('Failed to get Zoho token after 3 retries');
 }
 
-function formatCall(c, transcriptIds, summarizedIds) {
+function formatCall(c, transcriptIds, summarizedIds, locations) {
   const customerRec = c.What_Id || c.Who_Id;
   const customerName = customerRec?.name || 'Unknown';
   const phoneMatch = c.Subject?.match(/\((\+\d+)\)/);
   const phone = phoneMatch ? phoneMatch[1] : '';
   const hasTranscript = transcriptIds.has(c.id);
   const hasSummary = summarizedIds.has(c.id);
+  const location = locations?.get(c.id) || null;
 
   return {
     id: c.id,
@@ -99,6 +116,8 @@ function formatCall(c, transcriptIds, summarizedIds) {
     recordingUrl: c.Voice_Recording__s,
     hasTranscript,
     hasSummary,
+    city: location?.city || null,
+    state: location?.state || null,
   };
 }
 
@@ -107,8 +126,8 @@ export async function GET(request) {
   const callId = searchParams.get('callId');
 
   try {
-    const [token, transcriptIds, summarizedIds] = await Promise.all([
-      getZohoToken(), listTranscriptIds(), listSummarizedIds(),
+    const [token, transcriptIds, summarizedIds, locations] = await Promise.all([
+      getZohoToken(), listTranscriptIds(), listSummarizedIds(), listLocations(),
     ]);
     const api = process.env.ZOHO_API_DOMAIN;
     const fields = 'id,Subject,Call_Type,Call_Duration,Call_Start_Time,Owner,Who_Id,What_Id,Voice_Recording__s,Call_Status,Call_Result';
@@ -126,7 +145,7 @@ export async function GET(request) {
       }
       const data = await res.json();
       const record = data.data?.[0] || data;
-      return NextResponse.json(formatCall(record, transcriptIds, summarizedIds));
+      return NextResponse.json(formatCall(record, transcriptIds, summarizedIds, locations));
     }
 
     // Paginate newest-first until we cross the last-month cutoff, then stop.
@@ -171,7 +190,7 @@ export async function GET(request) {
       const t = c.Call_Start_Time ? new Date(c.Call_Start_Time).getTime() : NaN;
       return !isNaN(t) && t >= cutoff;
     });
-    return NextResponse.json(calls.map(c => formatCall(c, transcriptIds, summarizedIds)));
+    return NextResponse.json(calls.map(c => formatCall(c, transcriptIds, summarizedIds, locations)));
   } catch (err) {
     console.error('Calls API error:', err);
     return NextResponse.json({ error: err.message }, { status: 500 });

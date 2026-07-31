@@ -237,6 +237,9 @@ export default function CallDetailPage({ params }) {
             <h4>Call Details</h4>
             <div className="info-row"><span>Customer</span><span>{callMeta.customer.name}</span></div>
             <div className="info-row"><span>Phone</span><span>{callMeta.customer.phone}</span></div>
+            {callMeta.city && (
+              <div className="info-row"><span>Location</span><span>{callMeta.city}</span></div>
+            )}
             <div className="info-row"><span>Agent</span><span>{callMeta.agent}</span></div>
             <div className="info-row"><span>Date</span><span>{date} {time}</span></div>
             <div className="info-row"><span>Duration</span><span>{callMeta.duration}</span></div>

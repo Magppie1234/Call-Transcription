@@ -28,6 +28,11 @@
   font-weight: 500;
 }
 
+.location-cell {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
 .call-icon.inbound {
   background-color: var(--positive-bg);
   color: var(--positive-text);
