@@ -7,7 +7,9 @@ create table if not exists transcripts (
   created_at timestamptz not null default now()
 );
 
--- Small key/value table for server-side state (currently: cached Zoho OAuth token).
+-- Small key/value table for server-side state (currently: cached Zoho OAuth
+-- token, plus the published FAQ analysis under key 'faq_analysis' — built by
+-- scripts/extract_faqs.py + scripts/aggregate_faqs.py, served by /api/faqs).
 create table if not exists app_kv (
   key        text primary key,
   value      jsonb not null,
@@ -91,3 +93,13 @@ alter table call_summaries
 
 create index if not exists idx_call_summaries_call_category on call_summaries (call_category);
 create index if not exists idx_call_summaries_conversion on call_summaries (conversion_likelihood);
+
+-- Caller state/city, resolved from the linked Zoho Lead/Contact/Account.
+-- Lives on `transcripts` (not `call_summaries`) because it applies to every
+-- call already on the dashboard, not just the subset that's been LLM-summarized.
+-- Populated by scripts/backfill_call_states.py --apply.
+alter table transcripts
+  add column if not exists state text,
+  add column if not exists city  text;
+
+create index if not exists idx_transcripts_state on transcripts (state);

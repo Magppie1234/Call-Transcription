@@ -33,6 +33,12 @@ export default function Sidebar() {
         <Link href="/analytics" className={`nav-item ${isActive('/analytics') ? 'active' : ''}`}>
           <span className="icon">📊</span> Analytics
         </Link>
+        <Link href="/regions" className={`nav-item ${isActive('/regions') ? 'active' : ''}`}>
+          <span className="icon">📍</span> Regions
+        </Link>
+        <Link href="/faqs" className={`nav-item ${isActive('/faqs') ? 'active' : ''}`}>
+          <span className="icon">❓</span> FAQs
+        </Link>
         <Link href="#" className="nav-item">
           <span className="icon">🔌</span> Integrations
         </Link>
