@@ -223,6 +223,17 @@ def main():
             if n not in assigned:
                 faqs.append({"canonical_question": items[i]["question"], "topic": topic, "members": [i]})
 
+    # Persist raw-question -> canonical-question so downstream consumers (the
+    # Call Intelligence dataset) can reuse this exact clustering instead of
+    # re-deriving it with fuzzy matching.
+    question_map = {}
+    for f in faqs:
+        for i in f["members"]:
+            question_map[items[i]["question"]] = f["canonical_question"]
+    (BASE / "out" / "faq_question_map.json").write_text(
+        json.dumps(question_map, indent=1, ensure_ascii=False))
+    print(f"🔗 wrote raw→canonical map for {len(question_map)} question wordings")
+
     # ── 2. per-FAQ stats ────────────────────────────────────────────────────
     STATUSES = ["answered_clearly", "answered_partially", "deflected", "unanswered"]
     for fid, f in enumerate(faqs):

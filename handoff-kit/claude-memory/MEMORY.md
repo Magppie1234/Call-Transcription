@@ -1,0 +1,4 @@
+- [Ask before changing LLM model](ask-before-changing-llm-model.md) — model choice is the user's cost decision, even for test runs
+- [Never paste API keys in chat](never-paste-api-keys-in-chat.md) — user pastes into .env; verify by length/prefix only
+- [Transcripts contain customer PII](transcripts-contain-customer-pii.md) — real names on all 723 calls; new vendors need the user's yes
+- [Lead state data for regional task](project_lead_state_data.md) — Zoho Leads module has State1/City; join via Call's Who_Id/What_Id; deferred task
