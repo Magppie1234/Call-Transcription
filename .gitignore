@@ -22,3 +22,10 @@ __pycache__/
 *.py[cod]
 .venv/
 venv/
+
+# dashboard-v2 (Vite build + real customer dataset — regenerate locally with
+# scripts/build_ci_dataset.py rather than committing 722 real names/transcripts)
+dashboard-v2/node_modules/
+dashboard-v2/dist/
+dashboard-v2/dist-ssr/
+dashboard-v2/src/data/real/
