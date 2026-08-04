@@ -46,7 +46,7 @@ stone modular kitchen company in India; calls are romanised Hindi/Hinglish.
   claude.ai Supabase MCP connector is logged into a DIFFERENT Supabase account
   (it sees "Magppie1234's Project" and "clarity-desk-prod", NOT this project),
   so Claude has **no DDL access** — schema changes must be run by the user in
-  the Supabase SQL editor (source of truth: `dashboard/supabase-schema.sql`).
+  the Supabase SQL editor (source of truth: `infrastructure/supabase/schema.sql`).
   This is exactly why the FAQ analysis lives as one jsonb value in `app_kv`
   instead of proper tables.
 - **Vercel**: team `magppiesilverstonepvtltd` (team_3kNUUimkx3oLM7Mfudka1f6S).

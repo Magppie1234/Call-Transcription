@@ -10,7 +10,7 @@ have been generated locally. Safe to re-run — upserts by call_id (PostgREST
 uploaded.
 
 Requires SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in .env, and the
-`transcripts` table created (see dashboard/supabase-schema.sql).
+`transcripts` table created (see infrastructure/supabase/schema.sql).
 """
 import os, sys, json
 from pathlib import Path

@@ -1,5 +1,6 @@
 # Secrets — never commit
 .env
+.local-backups/
 .env.*
 !.env.example
 *.pem
